@@ -1,0 +1,11 @@
+{
+  "name": "kb-draft-gemini",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "googleapis": "^119.0.0",
+    "@google-cloud/ai": "^1.1.0"
+  }
+}
