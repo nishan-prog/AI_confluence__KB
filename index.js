@@ -1,96 +1,137 @@
 // index.js
-import express from 'express';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { google } from 'googleapis';
-import { PredictionServiceClient } from '@google-cloud/aiplatform';
 import axios from 'axios';
+import { PredictionServiceClient } from '@google-cloud/aiplatform';
 
 dotenv.config();
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// Load state for processed emails
+const stateFile = './state.json';
+let state = {};
+if (fs.existsSync(stateFile)) {
+  state = JSON.parse(fs.readFileSync(stateFile));
+}
 
-// ---- Google Vertex AI setup ----
+// Environment variables
+const {
+  CONFLUENCE_BASE_URL,
+  CONFLUENCE_EMAIL,
+  CONFLUENCE_API_TOKEN,
+  CONFLUENCE_SPACE,
+  GMAIL_CLIENT_EMAIL,
+  GMAIL_PRIVATE_KEY,
+  GMAIL_PROJECT_ID,
+  GMAIL_IMPERSONATED_USER
+} = process.env;
+
+// Setup Gmail via service account impersonation
+const auth = new google.auth.JWT({
+  email: GMAIL_CLIENT_EMAIL,
+  key: GMAIL_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+  subject: GMAIL_IMPERSONATED_USER
+});
+const gmail = google.gmail({ version: 'v1', auth });
+
+// Setup Vertex AI / Gemini client
 const vertexClient = new PredictionServiceClient({
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
 });
 
-// ---- Gmail setup ----
-const oAuth2Client = new google.auth.OAuth2(
-  process.env.GMAIL_CLIENT_ID,
-  process.env.GMAIL_CLIENT_SECRET,
-  process.env.GMAIL_REDIRECT_URI
-);
-oAuth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
-
-const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-
-// ---- Confluence API helper ----
+// Create Confluence draft helper
 async function createConfluenceDraft(title, content) {
-  const url = `${process.env.CONFLUENCE_BASE_URL}/rest/api/content/`;
+  const url = `${CONFLUENCE_BASE_URL}/rest/api/content/`;
   const payload = {
-    type: "page",
-    title: title,
-    space: { key: process.env.CONFLUENCE_SPACE },
-    body: { storage: { value: content, representation: "storage" } },
-    status: "draft"
+    type: 'page',
+    title,
+    space: { key: CONFLUENCE_SPACE },
+    body: { storage: { value: content, representation: 'storage' } },
+    metadata: { labels: ['review-needed'] }
   };
-
-  const auth = Buffer.from(`${process.env.CONFLUENCE_EMAIL}:${process.env.CONFLUENCE_API_KEY}`).toString('base64');
-
-  const response = await axios.post(url, payload, {
+  const authHeader = Buffer.from(`${CONFLUENCE_EMAIL}:${CONFLUENCE_API_TOKEN}`).toString('base64');
+  const resp = await axios.post(url, payload, {
     headers: {
-      Authorization: `Basic ${auth}`,
+      Authorization: `Basic ${authHeader}`,
       'Content-Type': 'application/json'
     }
   });
-
-  return response.data;
+  return resp.data;
 }
 
-// ---- Fetch emails and summarize ----
-async function fetchAndSummarizeEmails() {
-  // List latest emails with "Internal" in subject
+// Fetch recent “Internal” emails
+async function fetchInternalEmails() {
   const res = await gmail.users.messages.list({
     userId: 'me',
-    q: 'subject:Internal',
+    q: 'subject:"Internal"',
     maxResults: 5
   });
+  return res.data.messages || [];
+}
 
-  if (!res.data.messages) return;
+async function getEmailDetails(emailId) {
+  const res = await gmail.users.messages.get({ userId: 'me', id: emailId, format: 'full' });
+  const headers = res.data.payload.headers || [];
+  const from = headers.find(h => h.name === 'From')?.value || 'unknown';
+  const subject = headers.find(h => h.name === 'Subject')?.value || 'No Subject';
+  const date = headers.find(h => h.name === 'Date')?.value || '';
+  let body = '';
+  if (res.data.payload.parts) {
+    const part = res.data.payload.parts.find(p => p.mimeType === 'text/plain');
+    if (part && part.body?.data) {
+      body = Buffer.from(part.body.data, 'base64').toString('utf-8');
+    }
+  } else if (res.data.payload.body?.data) {
+    body = Buffer.from(res.data.payload.body.data, 'base64').toString('utf-8');
+  }
+  return { id: emailId, from, subject, date, body };
+}
 
-  for (const msg of res.data.messages) {
-    const messageDetail = await gmail.users.messages.get({ userId: 'me', id: msg.id, format: 'full' });
-    const body = messageDetail.data.snippet;
+// Summarize via Vertex AI / Gemini
+async function summarizeText(text) {
+  const [response] = await vertexClient.predict({
+    endpoint: `projects/${GMAIL_PROJECT_ID}/locations/us-central1/endpoints/<YOUR_ENDPOINT_ID>`,
+    instances: [{ content: text }],
+    parameters: {}
+  });
+  // The response structure may vary — adapt as needed
+  return response.predictions?.[0]?.content || text;
+}
 
-    // ---- Use Vertex AI to summarize ----
-    const [response] = await vertexClient.predict({
-      endpoint: 'projects/YOUR_PROJECT/locations/us-central1/endpoints/YOUR_ENDPOINT_ID', // replace with your Gemini endpoint
-      instances: [{ content: body }],
-      parameters: {}
-    });
-
-    const summary = response.predictions[0]?.summary || body;
-
-    // Create draft Confluence page
-    const draft = await createConfluenceDraft(`Internal Ticket Summary: ${msg.id}`, summary);
-    console.log('Draft created:', draft.id);
+// Main process
+async function processEmails() {
+  const emails = await fetchInternalEmails();
+  for (const e of emails) {
+    if (state[e.id]) continue;
+    try {
+      const ticket = await getEmailDetails(e.id);
+      const summary = await summarizeText(ticket.body);
+      const pageTitle = `KB Draft – ${ticket.subject}`;
+      const contentHtml = `
+        <p><b>Ticket ID:</b> ${ticket.id}</p>
+        <p><b>From:</b> ${ticket.from}</p>
+        <p><b>Date:</b> ${ticket.date}</p>
+        <p><b>Summary:</b></p>
+        <p>${summary}</p>`;
+      await createConfluenceDraft(pageTitle, contentHtml);
+      console.log(`Created draft for ${ticket.id}`);
+      state[ticket.id] = true;
+      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+    } catch (err) {
+      console.error(`Error processing ${e.id}`, err.response?.data || err.message);
+    }
   }
 }
 
-// ---- Express endpoint (trigger fetch manually) ----
-app.get('/run', async (req, res) => {
-  try {
-    await fetchAndSummarizeEmails();
-    res.send('Emails fetched and draft KB pages created.');
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Error processing emails.');
-  }
-});
+// Run at startup and then every 5 minutes
+processEmails();
+setInterval(processEmails, 5 * 60 * 1000);
 
-app.listen(PORT, () => {
-  console.log(`AI KB bot running on port ${PORT}`);
-});
+// Start simple server to keep alive
+import express from 'express';
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('AI KB Bot alive.'));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
