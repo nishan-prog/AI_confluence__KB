@@ -13,41 +13,46 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// ✅ Load Google Service Account credentials from environment variable
-// Make sure you have set GOOGLE_SERVICE_ACCOUNT_JSON in Render (paste the full JSON)
-const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+// ---- Load Google service account credentials ----
+if (!process.env.GOOGLE_SERVICE_JSON) {
+  console.error("❌ Missing GOOGLE_SERVICE_JSON environment variable");
+  process.exit(1);
+}
 
-// Gmail API client setup with impersonation
-const auth = new google.auth.GoogleAuth({
-  credentials,
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_JSON);
+} catch (err) {
+  console.error("❌ Invalid JSON in GOOGLE_SERVICE_JSON:", err);
+  process.exit(1);
+}
+
+// ---- Gmail API Auth with impersonation (Domain-wide Delegation) ----
+const auth = new google.auth.JWT({
+  email: serviceAccount.client_email,
+  key: serviceAccount.private_key,
   scopes: [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
   ],
+  subject: "support@stoneandchalk.com.au", // Impersonate mailbox
 });
 
-async function getGmailClient() {
-  const client = await auth.getClient();
-  // Impersonate the support mailbox
-  client.subject = "support@stoneandchalk.com.au";
-  return google.gmail({ version: "v1", auth: client });
-}
+const gmail = google.gmail({ version: "v1", auth });
 
-// Confluence API setup
+// ---- Confluence API setup ----
 const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE_URL;
 const CONFLUENCE_API_KEY = process.env.CONFLUENCE_API_KEY;
 const CONFLUENCE_USER = process.env.CONFLUENCE_USER;
 const CONFLUENCE_SPACE = process.env.CONFLUENCE_SPACE;
 
-// Track processed emails
+// ---- Track processed emails ----
 let processedEmails = new Set();
-
-// Poll Gmail for new internal emails every minute
 const POLL_INTERVAL = 60 * 1000;
 
 async function pollEmails() {
   try {
-    const gmail = await getGmailClient();
+    console.log("🔍 Checking Gmail for unread internal emails...");
 
     const res = await gmail.users.messages.list({
       userId: "support@stoneandchalk.com.au",
@@ -55,7 +60,10 @@ async function pollEmails() {
       maxResults: 10,
     });
 
-    if (!res.data.messages) return;
+    if (!res.data.messages || res.data.messages.length === 0) {
+      console.log("📭 No new emails found.");
+      return;
+    }
 
     for (const msg of res.data.messages) {
       if (processedEmails.has(msg.id)) continue;
@@ -66,22 +74,21 @@ async function pollEmails() {
         format: "full",
       });
 
-      const subjectHeader = fullMsg.data.payload.headers.find(
-        (h) => h.name === "Subject"
-      )?.value;
-      const fromHeader = fullMsg.data.payload.headers.find(
-        (h) => h.name === "From"
-      )?.value;
+      const headers = fullMsg.data.payload.headers;
+      const subjectHeader = headers.find((h) => h.name === "Subject")?.value || "No Subject";
+      const fromHeader = headers.find((h) => h.name === "From")?.value || "Unknown Sender";
 
       const body = Buffer.from(
         fullMsg.data.payload.parts?.[0]?.body?.data || "",
         "base64"
       ).toString("utf8");
 
+      console.log(`📩 New email: ${subjectHeader} from ${fromHeader}`);
+
       // Placeholder for AI-generated summary (Gemini)
       const summary = `Summary placeholder for: ${subjectHeader}`;
 
-      // Create draft Confluence page
+      // ---- Create draft Confluence page ----
       await axios.post(
         `${CONFLUENCE_BASE_URL}/wiki/rest/api/content/`,
         {
@@ -101,18 +108,18 @@ async function pollEmails() {
         }
       );
 
+      console.log(`✅ Confluence draft created for: ${subjectHeader}`);
       processedEmails.add(msg.id);
-      console.log(`✅ Created Confluence draft for: ${subjectHeader}`);
     }
   } catch (err) {
-    console.error("Error polling emails:", err);
+    console.error("🚨 Error polling emails:", err.response?.data || err.message);
   }
 }
 
 setInterval(pollEmails, POLL_INTERVAL);
 
 app.get("/", (req, res) => {
-  res.send("AI KB Draft Bot Running");
+  res.send("🚀 AI KB Draft Bot Running and Polling Gmail");
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
