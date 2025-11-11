@@ -10,13 +10,16 @@
   "engines": {
   "node": "18.x"
 },
+  {
   "dependencies": {
     "express": "^4.18.2",
     "dotenv": "^16.3.1",
-    "axios": "^1.6.6",
-    "googleapis": "^117.0.0",
-    "@google-cloud/aiplatform": "^3.12.0"
+    "googleapis": "^123.0.0",
+    "axios": "^1.6.0"
   },
+  "type": "module"
+}
+
   "keywords": [
     "AI",
     "Confluence",
