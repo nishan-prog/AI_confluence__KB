@@ -27,7 +27,7 @@ try {
   process.exit(1);
 }
 
-// ---- Gmail API Auth with impersonation (Domain-wide Delegation) ----
+// ---- Gmail API Auth with impersonation ----
 const auth = new google.auth.JWT({
   email: serviceAccount.client_email,
   key: serviceAccount.private_key,
@@ -41,23 +41,24 @@ const auth = new google.auth.JWT({
 const gmail = google.gmail({ version: "v1", auth });
 
 // ---- Confluence API setup ----
-const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE_URL;
+const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_SITE; // Correct endpoint without /wiki
 const CONFLUENCE_API_KEY = process.env.CONFLUENCE_API_KEY;
 const CONFLUENCE_USER = process.env.CONFLUENCE_USER;
 const CONFLUENCE_SPACE = process.env.CONFLUENCE_SPACE;
 
 // ---- Track processed emails ----
 let processedEmails = new Set();
+let reviewQueue = []; // Emails waiting for review
+
 const POLL_INTERVAL = 60 * 1000;
 
 async function pollEmails() {
   try {
     console.log("🔍 Checking Gmail for internal emails...");
 
-    // Fetch emails regardless of read/unread
     const res = await gmail.users.messages.list({
       userId: "support@stoneandchalk.com.au",
-      q: 'subject:"Internal"',
+      q: 'subject:"Internal"', // both read/unread
       maxResults: 10,
     });
 
@@ -84,35 +85,14 @@ async function pollEmails() {
         "base64"
       ).toString("utf8");
 
-      console.log(`📩 New email: ${subjectHeader} from ${fromHeader}`);
+      console.log(`📩 New email detected: ${subjectHeader} from ${fromHeader}`);
 
-      // Placeholder for AI-generated summary (Gemini)
+      // Placeholder for AI-generated summary
       const summary = `Summary placeholder for: ${subjectHeader}`;
 
-      // ---- Create draft Confluence page ----
-      try {
-        await axios.post(
-          `${CONFLUENCE_BASE_URL}/wiki/rest/api/content/`,
-          {
-            type: "page",
-            title: `KB Draft - ${subjectHeader}`,
-            space: { key: CONFLUENCE_SPACE },
-            body: {
-              storage: {
-                value: `<p>${summary}</p>`,
-                representation: "storage",
-              },
-            },
-          },
-          {
-            auth: { username: CONFLUENCE_USER, password: CONFLUENCE_API_KEY },
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-        console.log(`✅ Confluence draft created for: ${subjectHeader}`);
-      } catch (err) {
-        console.error(`🚨 Failed to create Confluence page for: ${subjectHeader}`, err.response?.data || err.message);
-      }
+      // ---- Add to review queue instead of posting immediately ----
+      reviewQueue.push({ subject: subjectHeader, body: summary });
+      console.log(`📝 Email added to review queue: ${subjectHeader}`);
 
       processedEmails.add(msg.id);
     }
@@ -121,7 +101,53 @@ async function pollEmails() {
   }
 }
 
+// ---- Function to post to Confluence after review ----
+async function postToConfluence() {
+  if (reviewQueue.length === 0) {
+    console.log("📭 No emails in review queue.");
+    return;
+  }
+
+  for (const item of reviewQueue) {
+    try {
+      await axios.post(
+        `${CONFLUENCE_BASE_URL}/rest/api/content/`,
+        {
+          type: "page",
+          title: `KB Draft - ${item.subject}`,
+          space: { key: CONFLUENCE_SPACE },
+          body: {
+            storage: {
+              value: `<p>${item.body}</p>`,
+              representation: "storage",
+            },
+          },
+        },
+        {
+          auth: {
+            username: CONFLUENCE_USER,
+            password: CONFLUENCE_API_KEY,
+          },
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+      console.log(`✅ Confluence draft created for: ${item.subject}`);
+    } catch (err) {
+      console.error(`🚨 Failed to create Confluence page for: ${item.subject}`, err.response?.data || err.message);
+    }
+  }
+
+  // Clear the queue after posting
+  reviewQueue = [];
+}
+
 setInterval(pollEmails, POLL_INTERVAL);
+
+// Optional: manual endpoint to trigger posting to Confluence after review
+app.post("/review/post", async (req, res) => {
+  await postToConfluence();
+  res.send("✅ Review queue posted to Confluence.");
+});
 
 app.get("/", (req, res) => {
   res.send("🚀 AI KB Draft Bot Running and Polling Gmail");
