@@ -1,17 +1,14 @@
 {
-  "name": "ai-kb-bot",
+  "name": "AI_confluence_KB",
   "version": "1.0.0",
-  "description": "Internal AI KB drafting bot for Stone & Chalk",
   "main": "index.js",
   "type": "module",
-  "scripts": {
-    "start": "node index.js"
+  "engines": {
+    "node": "18.x"
   },
   "dependencies": {
-  "express": "^4.18.2",
-  "@google-cloud/aiplatform": "^5.7.0",
-  "googleapis": "^122.0.0",
-  "axios": "^1.6.0",
-  "dotenv": "^16.3.1"
-}
+    "express": "^4.18.2",
+    "googleapis": "^117.0.0",
+    "@google-cloud/aiplatform": "^3.12.0"
+  }
 }
