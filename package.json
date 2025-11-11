@@ -1,11 +1,16 @@
 {
-  "name": "kb-draft-gemini",
+  "name": "ai-kb-bot",
   "version": "1.0.0",
+  "description": "Internal AI bot for summarizing tickets and drafting Confluence pages",
   "main": "index.js",
   "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
+    "@google-cloud/aiplatform": "^4.5.0",
+    "googleapis": "^122.0.0",
     "axios": "^1.6.0",
-    "googleapis": "^119.0.0",
-    "@google-cloud/ai": "^1.1.0"
+    "dotenv": "^16.3.1"
   }
 }
