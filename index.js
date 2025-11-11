@@ -4,7 +4,6 @@ process.env.NODE_OPTIONS = '--openssl-legacy-provider';
 import express from "express";
 import { google } from "googleapis";
 import dotenv from "dotenv";
-import fs from "fs";
 import axios from "axios";
 
 dotenv.config();
@@ -14,12 +13,13 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Path to Google service account key
-const KEYFILE_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+// ✅ Load Google Service Account credentials from environment variable
+// Make sure you have set GOOGLE_SERVICE_ACCOUNT_JSON in Render (paste the full JSON)
+const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 
 // Gmail API client setup with impersonation
 const auth = new google.auth.GoogleAuth({
-  keyFile: KEYFILE_PATH,
+  credentials,
   scopes: [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
@@ -102,6 +102,7 @@ async function pollEmails() {
       );
 
       processedEmails.add(msg.id);
+      console.log(`✅ Created Confluence draft for: ${subjectHeader}`);
     }
   } catch (err) {
     console.error("Error polling emails:", err);
