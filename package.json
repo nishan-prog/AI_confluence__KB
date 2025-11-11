@@ -1,17 +1,16 @@
 {
   "name": "ai-kb-bot",
   "version": "1.0.0",
-  "description": "Internal AI bot for summarizing tickets and drafting Confluence pages",
+  "description": "Internal AI KB drafting bot for Stone & Chalk",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-  "@google-ai/generative-ai": "^1.0.1",
-  "googleapis": "^121.0.0",
-  "dotenv": "^16.3.1",
-  "express": "^4.18.2",
-  "body-parser": "^1.20.2"
-}
+    "@google-cloud/aiplatform": "^4.6.0",
+    "googleapis": "^122.0.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1"
+  }
 }
