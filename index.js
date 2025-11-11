@@ -52,11 +52,12 @@ const POLL_INTERVAL = 60 * 1000;
 
 async function pollEmails() {
   try {
-    console.log("🔍 Checking Gmail for unread internal emails...");
+    console.log("🔍 Checking Gmail for internal emails...");
 
+    // Fetch emails regardless of read/unread
     const res = await gmail.users.messages.list({
       userId: "support@stoneandchalk.com.au",
-      q: 'subject:"Internal" is:unread',
+      q: 'subject:"Internal"',
       maxResults: 10,
     });
 
@@ -89,26 +90,30 @@ async function pollEmails() {
       const summary = `Summary placeholder for: ${subjectHeader}`;
 
       // ---- Create draft Confluence page ----
-      await axios.post(
-        `${CONFLUENCE_BASE_URL}/wiki/rest/api/content/`,
-        {
-          type: "page",
-          title: `KB Draft - ${subjectHeader}`,
-          space: { key: CONFLUENCE_SPACE },
-          body: {
-            storage: {
-              value: `<p>${summary}</p>`,
-              representation: "storage",
+      try {
+        await axios.post(
+          `${CONFLUENCE_BASE_URL}/wiki/rest/api/content/`,
+          {
+            type: "page",
+            title: `KB Draft - ${subjectHeader}`,
+            space: { key: CONFLUENCE_SPACE },
+            body: {
+              storage: {
+                value: `<p>${summary}</p>`,
+                representation: "storage",
+              },
             },
           },
-        },
-        {
-          auth: { username: CONFLUENCE_USER, password: CONFLUENCE_API_KEY },
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+          {
+            auth: { username: CONFLUENCE_USER, password: CONFLUENCE_API_KEY },
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+        console.log(`✅ Confluence draft created for: ${subjectHeader}`);
+      } catch (err) {
+        console.error(`🚨 Failed to create Confluence page for: ${subjectHeader}`, err.response?.data || err.message);
+      }
 
-      console.log(`✅ Confluence draft created for: ${subjectHeader}`);
       processedEmails.add(msg.id);
     }
   } catch (err) {
