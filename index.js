@@ -1,106 +1,96 @@
 // index.js
+import express from 'express';
+import dotenv from 'dotenv';
 import fs from 'fs';
+import path from 'path';
 import { google } from 'googleapis';
+import { PredictionServiceClient } from '@google-cloud/aiplatform';
 import axios from 'axios';
-import { TextServiceClient } from '@google-cloud/ai';
 
-let state = {};
-const stateFile = './state.json';
-if (fs.existsSync(stateFile)) {
-  state = JSON.parse(fs.readFileSync(stateFile));
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ---- Google Vertex AI setup ----
+const vertexClient = new PredictionServiceClient({
+  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+});
+
+// ---- Gmail setup ----
+const oAuth2Client = new google.auth.OAuth2(
+  process.env.GMAIL_CLIENT_ID,
+  process.env.GMAIL_CLIENT_SECRET,
+  process.env.GMAIL_REDIRECT_URI
+);
+oAuth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
+
+const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+
+// ---- Confluence API helper ----
+async function createConfluenceDraft(title, content) {
+  const url = `${process.env.CONFLUENCE_BASE_URL}/rest/api/content/`;
+  const payload = {
+    type: "page",
+    title: title,
+    space: { key: process.env.CONFLUENCE_SPACE },
+    body: { storage: { value: content, representation: "storage" } },
+    status: "draft"
+  };
+
+  const auth = Buffer.from(`${process.env.CONFLUENCE_EMAIL}:${process.env.CONFLUENCE_API_KEY}`).toString('base64');
+
+  const response = await axios.post(url, payload, {
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  return response.data;
 }
 
-const {
-  CONFLUENCE_SITE,
-  CONFLUENCE_USER,
-  CONFLUENCE_API_TOKEN,
-  CONFLUENCE_SPACE,
-  GMAIL_CLIENT_ID,
-  GMAIL_CLIENT_SECRET,
-  GMAIL_REDIRECT_URI,
-  GMAIL_REFRESH_TOKEN
-} = process.env;
-
-const oAuth2Client = new google.auth.OAuth2(
-  GMAIL_CLIENT_ID,
-  GMAIL_CLIENT_SECRET,
-  GMAIL_REDIRECT_URI
-);
-oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
-const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-const geminiClient = new TextServiceClient();
-
-async function fetchEmails() {
+// ---- Fetch emails and summarize ----
+async function fetchAndSummarizeEmails() {
+  // List latest emails with "Internal" in subject
   const res = await gmail.users.messages.list({
     userId: 'me',
-    q: 'is:unread subject:Internal',
+    q: 'subject:Internal',
     maxResults: 5
   });
-  return res.data.messages || [];
-}
 
-async function getEmail(id) {
-  const res = await gmail.users.messages.get({ userId: 'me', id, format: 'full' });
-  const headers = res.data.payload.headers;
-  const from = headers.find(h => h.name === 'From')?.value || 'unknown';
-  const subject = headers.find(h => h.name === 'Subject')?.value || 'No subject';
-  const date = headers.find(h => h.name === 'Date')?.value || '';
-  let body = '';
-  if (res.data.payload.parts) {
-    const part = res.data.payload.parts.find(p => p.mimeType === 'text/plain');
-    if (part) body = Buffer.from(part.body.data, 'base64').toString('utf-8');
-  } else {
-    body = Buffer.from(res.data.payload.body.data || '', 'base64').toString('utf-8');
-  }
-  return { id, from, subject, date, body };
-}
+  if (!res.data.messages) return;
 
-async function generateSummary(text) {
-  const response = await geminiClient.generateText({
-    model: 'models/text-bison-001',
-    input: `Summarize this IT support request concisely:\n\n${text}`
-  });
-  return response[0].content;
-}
+  for (const msg of res.data.messages) {
+    const messageDetail = await gmail.users.messages.get({ userId: 'me', id: msg.id, format: 'full' });
+    const body = messageDetail.data.snippet;
 
-async function postDraft(ticket) {
-  const summary = await generateSummary(ticket.body);
-  const pageContent = `
-    <b>Ticket ID:</b> ${ticket.id}<br>
-    <b>From:</b> ${ticket.from}<br>
-    <b>Date:</b> ${ticket.date}<br>
-    <b>Summary:</b><br>${summary}
-  `;
-  const pageData = {
-    type: 'page',
-    title: `KB Draft - ${ticket.subject}`,
-    space: { key: CONFLUENCE_SPACE },
-    body: { storage: { value: pageContent, representation: 'storage' } },
-    metadata: { labels: ['review-needed'] }
-  };
-  await axios.post(`${CONFLUENCE_SITE}/rest/api/content/`, pageData, {
-    auth: { username: CONFLUENCE_USER, password: CONFLUENCE_API_TOKEN },
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
+    // ---- Use Vertex AI to summarize ----
+    const [response] = await vertexClient.predict({
+      endpoint: 'projects/YOUR_PROJECT/locations/us-central1/endpoints/YOUR_ENDPOINT_ID', // replace with your Gemini endpoint
+      instances: [{ content: body }],
+      parameters: {}
+    });
 
-async function processTickets() {
-  const emails = await fetchEmails();
-  for (const e of emails) {
-    if (state[e.id]) continue;
-    const ticket = await getEmail(e.id);
-    ticket.id = e.id;
-    try {
-      await postDraft(ticket);
-      console.log(`Draft created for email ${ticket.id}`);
-      state[ticket.id] = true;
-      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-      await gmail.users.messages.modify({ userId: 'me', id: e.id, requestBody: { removeLabelIds: ['UNREAD'] } });
-    } catch (err) {
-      console.error(`Failed for email ${ticket.id}:`, err.response?.data || err.message);
-    }
+    const summary = response.predictions[0]?.summary || body;
+
+    // Create draft Confluence page
+    const draft = await createConfluenceDraft(`Internal Ticket Summary: ${msg.id}`, summary);
+    console.log('Draft created:', draft.id);
   }
 }
 
-setInterval(processTickets, 2 * 60 * 1000);
-processTickets();
+// ---- Express endpoint (trigger fetch manually) ----
+app.get('/run', async (req, res) => {
+  try {
+    await fetchAndSummarizeEmails();
+    res.send('Emails fetched and draft KB pages created.');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error processing emails.');
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`AI KB bot running on port ${PORT}`);
+});
