@@ -92,12 +92,23 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-   const jql = `project = SC AND statusCategory = Done AND resolutiondate >= "${fiveDaysAgo.toISOString()}" ORDER BY resolutiondate DESC`;
-console.log("🔍 Using JQL:", jql);
+    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // default 5 days back
+    const jql = `
+      project = SC
+      AND (status = Resolved OR status = Done OR resolution IS NOT EMPTY)
+      AND resolutiondate >= "${new Date(lastPoll).toISOString()}"
+      ORDER BY resolutiondate DESC
+    `;
+
+    console.log("🔍 Using JQL:", jql.trim());
+
     const res = await axios.post(
       `${JIRA_BASE_URL}/rest/api/3/search/jql`,
-      { jql, maxResults: 20 },
+      {
+        jql,
+        maxResults: 20,
+        fields: ["summary", "assignee", "status", "resolutiondate"],
+      },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: {
@@ -126,7 +137,7 @@ console.log("🔍 Using JQL:", jql);
       }
     }
 
-    // Update last poll timestamp AFTER processing tickets
+    // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
 
@@ -134,6 +145,7 @@ console.log("🔍 Using JQL:", jql);
     console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
   }
 }
+
 
 
 
