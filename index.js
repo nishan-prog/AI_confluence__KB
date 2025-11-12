@@ -16,8 +16,7 @@ const PORT = process.env.PORT || 3000;
 
 // ---- Constants ----
 const POLL_INTERVAL = 60 * 1000; // 1 min
-let processedEmails = new Set();  // Track processed emails
-let reviewQueue = [];             // Emails waiting for review
+let reviewQueue = [];             // Tickets waiting for review
 const STATE_FILE = "./state.json";
 let state = {};
 
@@ -36,12 +35,7 @@ function saveState() {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
-// ---- Load Google service account credentials ----
-if (!process.env.GOOGLE_SERVICE_JSON) {
-  console.error("❌ Missing GOOGLE_SERVICE_JSON environment variable");
-  process.exit(1);
-}
-
+// ---- Gmail API Auth ----
 let serviceAccount;
 try {
   serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_JSON);
@@ -50,7 +44,6 @@ try {
   process.exit(1);
 }
 
-// ---- Gmail API Auth ----
 const auth = new google.auth.JWT({
   email: serviceAccount.client_email,
   key: serviceAccount.private_key,
@@ -74,91 +67,54 @@ const JIRA_BASE_URL = process.env.JIRA_SITE;
 const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
 const JIRA_USER_EMAIL = process.env.JIRA_USER_EMAIL;
 
-// ---- Poll Gmail for Internal emails ----
-async function pollEmails() {
+// ---- Poll Jira for recently resolved tickets ----
+async function pollResolvedTickets() {
   try {
-    console.log("🔍 Checking Gmail for internal emails...");
+    const lastPoll = state.lastPollTimestamp
+      ? new Date(state.lastPollTimestamp).toISOString()
+      : new Date(Date.now() - 60 * 60 * 1000).toISOString(); // fallback: 1 hour ago
 
-    const res = await gmail.users.messages.list({
-      userId: "support@stoneandchalk.com.au",
-      q: 'subject:"Internal"',
-      maxResults: 10,
+    // Jira JQL: tickets resolved since last poll
+    const jql = `status = Resolved AND resolved >= "${lastPoll}"`;
+
+    const res = await axios.get(`${JIRA_BASE_URL}/rest/api/3/search`, {
+      auth: { username: JIRA_USER_EMAIL, password: JIRA_API_TOKEN },
+      params: { jql, fields: "summary,description,assignee,resolutiondate" },
     });
 
-    if (!res.data.messages || res.data.messages.length === 0) {
-      console.log("📭 No new emails found.");
-      return;
+    const issues = res.data.issues;
+    if (!issues || issues.length === 0) {
+      console.log("📭 No recently resolved Jira tickets found.");
     }
 
-    for (const msg of res.data.messages) {
-      if (processedEmails.has(msg.id)) continue;
+    for (const issue of issues) {
+      const { key, fields } = issue;
+      const status = fields.status.name;
+      const assigneeEmail = fields.assignee?.emailAddress;
+      const resolvedTimestamp = fields.resolutiondate
+        ? new Date(fields.resolutiondate).getTime()
+        : 0;
 
-      const fullMsg = await gmail.users.messages.get({
-        userId: "support@stoneandchalk.com.au",
-        id: msg.id,
-        format: "full",
-      });
+      if (!assigneeEmail) continue;
 
-      const headers = fullMsg.data.payload.headers;
-      const subjectHeader = headers.find((h) => h.name === "Subject")?.value || "No Subject";
-      const fromHeader = headers.find((h) => h.name === "From")?.value || "Unknown Sender";
-      const body = Buffer.from(fullMsg.data.payload.parts?.[0]?.body?.data || "", "base64").toString("utf8");
+      // Prepare Gemini summary placeholder (can replace with real Gemini summary)
+      const summary = `Gemini Summary for ticket ${key}: ${fields.summary}\n\n${fields.description || ""}`;
 
-      console.log(`📩 New email detected: ${subjectHeader} from ${fromHeader}`);
+      // Add to review queue
+      reviewQueue.push({ subject: `${key} - ${fields.summary}`, body: summary });
 
-      // Extract Jira ticket key from subject or body
-      const ticketMatch = subjectHeader.match(/\[([A-Z]+-\d+)\]/);
-      const ticketKey = ticketMatch ? ticketMatch[1] : null;
+      console.log(`📝 Ticket added to review queue: ${key} - ${fields.summary}`);
 
-      if (!ticketKey) {
-        console.log("⚠️ No Jira ticket key found in email. Skipping.");
-        continue;
-      }
-
-      // Fetch Jira issue
-      const issue = await fetchJiraIssue(ticketKey);
-      if (!issue) continue;
-
-      const { status, assigneeEmail, resolvedTimestamp } = issue;
-
-      // Skip if not recently resolved
-      const lastPoll = state.lastPollTimestamp || 0;
-      if (status.toLowerCase() === "resolved" && resolvedTimestamp > lastPoll && assigneeEmail) {
-        const summary = `Gemini Summary: ${body}`;
-        reviewQueue.push({ subject: subjectHeader, body: summary });
-
-        console.log(`📝 Email added to review queue: ${subjectHeader}`);
-        await sendReviewEmail(assigneeEmail, subjectHeader, summary);
-      }
-
-      processedEmails.add(msg.id);
+      // Send review email to assignee
+      await sendReviewEmail(assigneeEmail, `${key} - ${fields.summary}`, summary);
     }
 
     // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
+
   } catch (err) {
-    console.error("🚨 Error polling emails:", err.response?.data || err.message);
-  }
-}
-
-// ---- Fetch Jira issue status & assignee ----
-async function fetchJiraIssue(issueKey) {
-  try {
-    const res = await axios.get(`${JIRA_BASE_URL}/rest/api/3/issue/${issueKey}`, {
-      auth: { username: JIRA_USER_EMAIL, password: JIRA_API_TOKEN },
-      headers: { "Accept": "application/json" },
-    });
-
-    const issue = res.data;
-    const status = issue.fields.status.name;
-    const assigneeEmail = issue.fields.assignee?.emailAddress;
-    const resolvedTimestamp = issue.fields.resolutiondate ? new Date(issue.fields.resolutiondate).getTime() : 0;
-
-    return { status, assigneeEmail, resolvedTimestamp };
-  } catch (err) {
-    console.error(`🚨 Failed to fetch Jira issue ${issueKey}:`, err.response?.data || err.message);
-    return null;
+    console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
   }
 }
 
@@ -172,12 +128,16 @@ async function sendReviewEmail(assigneeEmail, subject, summary) {
       `Content-Type: text/html; charset=UTF-8`,
       "",
       `<p>Hi,</p>
-      <p>A new internal email summary generated by Gemini is ready for review:</p>
+      <p>A new resolved Jira ticket summary generated by Gemini is ready for review:</p>
       <p><strong>${summary}</strong></p>
       <p>Approve this to post to Confluence.</p>`
     ].join("\n");
 
-    const encodedMessage = Buffer.from(rawMessage).toString("base64").replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const encodedMessage = Buffer.from(rawMessage)
+      .toString("base64")
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
 
     await gmail.users.messages.send({
       userId: "support@stoneandchalk.com.au",
@@ -193,7 +153,7 @@ async function sendReviewEmail(assigneeEmail, subject, summary) {
 // ---- Post approved summaries to Confluence ----
 async function postToConfluence() {
   if (reviewQueue.length === 0) {
-    console.log("📭 No emails in review queue.");
+    console.log("📭 No items in review queue.");
     return;
   }
 
@@ -219,7 +179,7 @@ async function postToConfluence() {
 }
 
 // ---- Intervals ----
-setInterval(pollEmails, POLL_INTERVAL);
+setInterval(pollResolvedTickets, POLL_INTERVAL);
 
 // ---- Manual endpoint to post review queue ----
 app.post("/review/post", async (req, res) => {
@@ -228,7 +188,7 @@ app.post("/review/post", async (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("🚀 AI KB Draft Bot Running and Polling Gmail");
+  res.send("🚀 AI KB Draft Bot Running and Polling Jira");
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
