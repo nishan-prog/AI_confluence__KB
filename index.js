@@ -93,14 +93,17 @@ async function pollJiraTickets() {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
     const lastPoll = state.lastPollTimestamp || 0;
-    const jql = `status = Resolved AND resolutiondate >= "${new Date(lastPoll).toISOString()}" ORDER BY resolutiondate DESC`;
+    const jql = `status = Resolved AND resolutiondate >= ${new Date(lastPoll).toISOString()} ORDER BY resolutiondate DESC`;
 
     const res = await axios.post(
       `${JIRA_BASE_URL}/rest/api/3/search/jql`,
       { jql, maxResults: 20 },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
       }
     );
 
@@ -111,9 +114,8 @@ async function pollJiraTickets() {
       const issueKey = issue.key;
       const assigneeEmail = issue.fields.assignee?.emailAddress;
       const summary = issue.fields.summary;
-      const resolutionDate = issue.fields.resolutiondate ? new Date(issue.fields.resolutiondate).getTime() : 0;
 
-      if (assigneeEmail && resolutionDate > lastPoll && !processedEmails.has(issueKey)) {
+      if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
         reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
 
@@ -124,7 +126,7 @@ async function pollJiraTickets() {
       }
     }
 
-    // Update last poll timestamp
+    // Update last poll timestamp AFTER processing tickets
     state.lastPollTimestamp = Date.now();
     saveState();
 
