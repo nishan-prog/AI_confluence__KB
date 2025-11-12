@@ -92,31 +92,32 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // fallback to 5 days
-const jql = `project = SC AND statusCategory = Done AND updated >= "${new Date(lastPoll).toISOString().slice(0,19).replace("T"," ")}" ORDER BY updated DESC`;
+    // Fallback: 5 days ago if no last poll
+    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; 
+    const pollDate = new Date(lastPoll);
+    const jqlDate = `${pollDate.getFullYear()}-${String(pollDate.getMonth()+1).padStart(2,'0')}-${String(pollDate.getDate()).padStart(2,'0')} ${String(pollDate.getHours()).padStart(2,'0')}:${String(pollDate.getMinutes()).padStart(2,'0')}`;
 
+    const jql = `project = SC AND statusCategory = Done AND updated >= "${jqlDate}" ORDER BY updated DESC`;
     console.log("🔍 Using JQL:", jql);
 
     const res = await axios.post(
       `${JIRA_BASE_URL}/rest/api/3/search/jql`,
       { jql, maxResults: 20 },
-      {
+      { 
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: { "Accept": "application/json" },
+        headers: { "Accept": "application/json" }
       }
     );
 
     const issues = res.data.issues || [];
-    console.log(`📋 Found ${issues.length} recently updated ticket(s).`);
+    console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
 
     for (const issue of issues) {
       const issueKey = issue.key;
-      const status = issue.fields.status?.name;
       const assigneeEmail = issue.fields.assignee?.emailAddress;
       const summary = issue.fields.summary;
 
-      // Only process tickets that are actually "Resolved" and not already processed
-      if (status === "Resolved" && assigneeEmail && !processedEmails.has(issueKey)) {
+      if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
         reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
 
