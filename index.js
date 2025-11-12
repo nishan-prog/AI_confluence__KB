@@ -95,10 +95,10 @@ async function pollJiraTickets() {
     const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // default 5 days back
     const jql = `
       project = SC
-      AND (status = Resolved OR status = Done OR resolution IS NOT EMPTY)
-      AND resolutiondate >= "${new Date(lastPoll).toISOString()}"
-      ORDER BY resolutiondate DESC
-    `;
+AND statusCategory = Done
+AND updated >= "2025-11-07T03:26:06.592Z"
+ORDER BY updated DESC
+`;
 
     console.log("🔍 Using JQL:", jql.trim());
 
