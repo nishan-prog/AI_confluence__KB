@@ -72,7 +72,7 @@ const CONFLUENCE_SPACE = process.env.CONFLUENCE_SPACE;
 // ---- Jira API setup ----
 const JIRA_BASE_URL = process.env.JIRA_BASE_URL ? process.env.JIRA_BASE_URL.replace(/\/$/, '') : null;
 const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
-const JIRA_USER_EMAIL = process.env.JIRA_USER_EMAIL;
+const JIRA_USER = process.env.JIRA_USER;
 
 if (!JIRA_BASE_URL) {
   console.error("❌ Missing JIRA_BASE_URL environment variable");
@@ -82,8 +82,8 @@ if (!JIRA_API_TOKEN) {
   console.error("❌ Missing JIRA_API_TOKEN environment variable");
   process.exit(1);
 }
-if (!JIRA_USER_EMAIL) {
-  console.error("❌ Missing JIRA_USER_EMAIL environment variable");
+if (!JIRA_USER) {
+  console.error("❌ Missing JIRA_USER environment variable");
   process.exit(1);
 }
 
@@ -94,7 +94,7 @@ async function pollJiraTickets() {
 
     const jql = `status = Resolved AND updated >= "${new Date(state.lastPollTimestamp || 0).toISOString()}"`;
     const res = await axios.get(`${JIRA_BASE_URL}/rest/api/3/search`, {
-      auth: { username: JIRA_USER_EMAIL, password: JIRA_API_TOKEN },
+      auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
       headers: { "Accept": "application/json" },
       params: { jql, maxResults: 20 },
     });
