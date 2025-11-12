@@ -92,8 +92,8 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    const lastPoll = state.lastPollTimestamp || 0;
-    const jql = `status = Resolved AND resolutiondate >= ${new Date(lastPoll).toISOString()} ORDER BY resolutiondate DESC`;
+    const lastPoll = state.lastPollTimestamp || Date.now() - 10*60*1000; // 10 mins back for safety
+    const jql = `status = Resolved AND resolutiondate >= "${new Date(lastPoll).toISOString()}" ORDER BY resolutiondate DESC`;
 
     const res = await axios.post(
       `${JIRA_BASE_URL}/rest/api/3/search/jql`,
