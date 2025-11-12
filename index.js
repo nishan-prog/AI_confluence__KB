@@ -92,12 +92,17 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    const jql = `status = Resolved AND updated >= "${new Date(state.lastPollTimestamp || 0).toISOString()}"`;
-    const res = await axios.get(`${JIRA_BASE_URL}/rest/api/3/search`, {
-      auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-      headers: { "Accept": "application/json" },
-      params: { jql, maxResults: 20 },
-    });
+    const lastPoll = state.lastPollTimestamp || 0;
+    const jql = `status = Resolved AND resolved >= "${new Date(lastPoll).toISOString()}" ORDER BY resolved DESC`;
+
+    const res = await axios.post(
+      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
+      { jql, maxResults: 20 },
+      {
+        auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
+        headers: { "Accept": "application/json" },
+      }
+    );
 
     const issues = res.data.issues || [];
     console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
@@ -117,6 +122,16 @@ async function pollJiraTickets() {
         processedEmails.add(issueKey);
       }
     }
+
+    // Update last poll timestamp
+    state.lastPollTimestamp = Date.now();
+    saveState();
+
+  } catch (err) {
+    console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
+  }
+}
+
 
     // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
