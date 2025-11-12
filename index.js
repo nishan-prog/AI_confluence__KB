@@ -5,6 +5,7 @@ import express from "express";
 import { google } from "googleapis";
 import dotenv from "dotenv";
 import axios from "axios";
+import fs from "fs";
 
 dotenv.config();
 
@@ -17,6 +18,23 @@ const PORT = process.env.PORT || 3000;
 const POLL_INTERVAL = 60 * 1000; // 1 min
 let processedEmails = new Set();  // Track processed emails
 let reviewQueue = [];             // Emails waiting for review
+const STATE_FILE = "./state.json";
+let state = {};
+
+// ---- Load state.json ----
+if (fs.existsSync(STATE_FILE)) {
+  try {
+    state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  } catch (err) {
+    console.error("❌ Failed to parse state.json:", err.message);
+    state = {};
+  }
+}
+
+// ---- Save state helper ----
+function saveState() {
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
 
 // ---- Load Google service account credentials ----
 if (!process.env.GOOGLE_SERVICE_JSON) {
@@ -32,7 +50,7 @@ try {
   process.exit(1);
 }
 
-// ---- Gmail API Auth with impersonation ----
+// ---- Gmail API Auth ----
 const auth = new google.auth.JWT({
   email: serviceAccount.client_email,
   key: serviceAccount.private_key,
@@ -88,7 +106,7 @@ async function pollEmails() {
 
       console.log(`📩 New email detected: ${subjectHeader} from ${fromHeader}`);
 
-      // Extract Jira ticket key from subject or body (expects format [DPT-123])
+      // Extract Jira ticket key from subject or body
       const ticketMatch = subjectHeader.match(/\[([A-Z]+-\d+)\]/);
       const ticketKey = ticketMatch ? ticketMatch[1] : null;
 
@@ -97,25 +115,28 @@ async function pollEmails() {
         continue;
       }
 
-      // Check Jira ticket status and assignee
+      // Fetch Jira issue
       const issue = await fetchJiraIssue(ticketKey);
       if (!issue) continue;
 
-      const { status, assigneeEmail } = issue;
+      const { status, assigneeEmail, resolvedTimestamp } = issue;
 
-      if (status.toLowerCase() === "resolved" && assigneeEmail) {
-        // Use Gemini summary from email body
+      // Skip if not recently resolved
+      const lastPoll = state.lastPollTimestamp || 0;
+      if (status.toLowerCase() === "resolved" && resolvedTimestamp > lastPoll && assigneeEmail) {
         const summary = `Gemini Summary: ${body}`;
         reviewQueue.push({ subject: subjectHeader, body: summary });
 
         console.log(`📝 Email added to review queue: ${subjectHeader}`);
-
-        // Send review email to assignee
         await sendReviewEmail(assigneeEmail, subjectHeader, summary);
       }
 
       processedEmails.add(msg.id);
     }
+
+    // Update last poll timestamp
+    state.lastPollTimestamp = Date.now();
+    saveState();
   } catch (err) {
     console.error("🚨 Error polling emails:", err.response?.data || err.message);
   }
@@ -132,7 +153,9 @@ async function fetchJiraIssue(issueKey) {
     const issue = res.data;
     const status = issue.fields.status.name;
     const assigneeEmail = issue.fields.assignee?.emailAddress;
-    return { status, assigneeEmail };
+    const resolvedTimestamp = issue.fields.resolutiondate ? new Date(issue.fields.resolutiondate).getTime() : 0;
+
+    return { status, assigneeEmail, resolvedTimestamp };
   } catch (err) {
     console.error(`🚨 Failed to fetch Jira issue ${issueKey}:`, err.response?.data || err.message);
     return null;
