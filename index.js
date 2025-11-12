@@ -98,7 +98,7 @@ async function pollJiraTickets() {
     console.log("🔍 Using JQL:", jql);
 
     const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/api/3/search`,
+      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
       { jql, maxResults: 20 },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
