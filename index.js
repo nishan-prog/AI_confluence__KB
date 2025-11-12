@@ -93,14 +93,14 @@ async function pollJiraTickets() {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
     const lastPoll = state.lastPollTimestamp || 0;
-    const jql = `status = Resolved AND resolved >= "${new Date(lastPoll).toISOString()}" ORDER BY resolved DESC`;
+    const jql = `status = Resolved AND resolutiondate >= "${new Date(lastPoll).toISOString()}" ORDER BY resolutiondate DESC`;
 
     const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/api/3/search/jql`, // POST endpoint for JQL search
-      { jql, maxResults: 20 },                  // body instead of query params
+      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
+      { jql, maxResults: 20 },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: { "Accept": "application/json" },
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
       }
     );
 
@@ -111,8 +111,9 @@ async function pollJiraTickets() {
       const issueKey = issue.key;
       const assigneeEmail = issue.fields.assignee?.emailAddress;
       const summary = issue.fields.summary;
+      const resolutionDate = issue.fields.resolutiondate ? new Date(issue.fields.resolutiondate).getTime() : 0;
 
-      if (assigneeEmail && !processedEmails.has(issueKey)) {
+      if (assigneeEmail && resolutionDate > lastPoll && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
         reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
 
@@ -122,7 +123,8 @@ async function pollJiraTickets() {
         processedEmails.add(issueKey);
       }
     }
-   // Update last poll timestamp
+
+    // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
 
@@ -130,6 +132,7 @@ async function pollJiraTickets() {
     console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
   }
 }
+
 
 
 // ---- Send review email ----
