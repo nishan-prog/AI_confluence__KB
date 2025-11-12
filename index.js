@@ -5,7 +5,6 @@ import express from "express";
 import { google } from "googleapis";
 import dotenv from "dotenv";
 import axios from "axios";
-import fs from "fs";
 
 dotenv.config();
 
@@ -13,6 +12,11 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+// ---- Constants ----
+const POLL_INTERVAL = 60 * 1000; // 1 min
+let processedEmails = new Set();  // Track processed emails
+let reviewQueue = [];             // Emails waiting for review
 
 // ---- Load Google service account credentials ----
 if (!process.env.GOOGLE_SERVICE_JSON) {
@@ -48,27 +52,11 @@ const CONFLUENCE_USER = process.env.CONFLUENCE_USER;
 const CONFLUENCE_SPACE = process.env.CONFLUENCE_SPACE;
 
 // ---- Jira API setup ----
-const JIRA_BASE_URL = process.env.JIRA_BASE_URL;
+const JIRA_BASE_URL = process.env.JIRA_SITE; // could be same as Confluence domain
 const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
-const JIRA_USER = process.env.JIRA_USER;
+const JIRA_USER_EMAIL = process.env.JIRA_USER_EMAIL;
 
-// ---- Load or initialize persistent state ----
-let state = { processedEmails: [], reviewQueue: [] };
-const STATE_FILE = "./state.json";
-if (fs.existsSync(STATE_FILE)) {
-  try {
-    state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-  } catch (err) {
-    console.warn("⚠️ Failed to read state.json, starting fresh");
-  }
-}
-
-// ---- Save state function ----
-function saveState() {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-}
-
-// ---- Poll Gmail for internal emails ----
+// ---- Poll Gmail for Internal emails ----
 async function pollEmails() {
   try {
     console.log("🔍 Checking Gmail for internal emails...");
@@ -85,7 +73,7 @@ async function pollEmails() {
     }
 
     for (const msg of res.data.messages) {
-      if (state.processedEmails.includes(msg.id)) continue;
+      if (processedEmails.has(msg.id)) continue;
 
       const fullMsg = await gmail.users.messages.get({
         userId: "support@stoneandchalk.com.au",
@@ -104,135 +92,113 @@ async function pollEmails() {
 
       console.log(`📩 New email detected: ${subjectHeader} from ${fromHeader}`);
 
+      // Gemini-generated summary placeholder
+      const summary = `Summary placeholder for: ${subjectHeader}`;
+
       // Add to review queue
-      state.reviewQueue.push({
-        id: msg.id,
-        subject: subjectHeader,
-        summary: body, // Assuming Gemini writes the summary in the email body
-        from: fromHeader,
-        jiraTicket: extractJiraTicket(subjectHeader) // helper function to extract ticket
-      });
-      state.processedEmails.push(msg.id);
-
+      reviewQueue.push({ subject: subjectHeader, body: summary });
       console.log(`📝 Email added to review queue: ${subjectHeader}`);
-    }
 
-    saveState();
+      processedEmails.add(msg.id);
+    }
   } catch (err) {
     console.error("🚨 Error polling emails:", err.response?.data || err.message);
   }
 }
 
-// ---- Helper to extract Jira ticket from subject ----
-function extractJiraTicket(subject) {
-  const match = subject.match(/[A-Z]+-\d+/);
-  return match ? match[0] : null;
-}
-
-// ---- Check Jira ticket resolved & assignee ----
-async function getJiraTicketInfo(ticketId) {
-  if (!ticketId) return null;
+// ---- Check Jira issue status and assignee ----
+async function fetchJiraIssue(issueKey) {
   try {
-    const res = await axios.get(`${JIRA_BASE_URL}/rest/api/3/issue/${ticketId}`, {
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${JIRA_USER}:${JIRA_API_TOKEN}`).toString('base64')}`,
-        Accept: "application/json",
-      },
+    const res = await axios.get(`${JIRA_BASE_URL}/rest/api/3/issue/${issueKey}`, {
+      auth: { username: JIRA_USER_EMAIL, password: JIRA_API_TOKEN },
+      headers: { "Accept": "application/json" },
     });
+
     const issue = res.data;
-    return {
-      assignee: issue.fields.assignee?.emailAddress,
-      resolved: issue.fields.status?.name === "Done",
-    };
+    const status = issue.fields.status.name;
+    const assigneeEmail = issue.fields.assignee?.emailAddress;
+    return { status, assigneeEmail };
   } catch (err) {
-    console.error(`🚨 Failed to fetch Jira ticket info for ${ticketId}`, err.response?.data || err.message);
+    console.error("🚨 Failed to fetch Jira issue:", err.response?.data || err.message);
     return null;
   }
 }
 
-// ---- Send review email ----
-async function sendReviewEmail(toEmail, subject, summary) {
-  const rawMessage = [
-    `From: support@stoneandchalk.com.au`,
-    `To: ${toEmail}`,
-    `Subject: Review KB Draft - ${subject}`,
-    `Content-Type: text/plain; charset=UTF-8`,
-    ``,
-    `Please review the AI-generated summary and approve to post to Confluence:\n\n${summary}`,
-  ].join("\n");
+// ---- Send review email to assignee ----
+async function sendReviewEmail(assigneeEmail, subject, summary) {
+  try {
+    const emailBody = `
+      Hi,
 
-  const encodedMessage = Buffer.from(rawMessage)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+      A new internal email summary is ready for review:
 
-  await gmail.users.messages.send({
-    userId: "support@stoneandchalk.com.au",
-    requestBody: { raw: encodedMessage },
-  });
-}
+      Subject: ${subject}
+      Summary: ${summary}
 
-// ---- Process review queue ----
-async function processReviewQueue() {
-  for (const item of state.reviewQueue) {
-    const jiraInfo = await getJiraTicketInfo(item.jiraTicket);
-    if (!jiraInfo) continue;
+      Approve this to post to Confluence.
+    `;
 
-    if (jiraInfo.resolved && jiraInfo.assignee) {
-      // Send email to assignee for review
-      await sendReviewEmail(jiraInfo.assignee, item.subject, item.summary);
-      console.log(`✉️ Review email sent to ${jiraInfo.assignee} for ${item.subject}`);
-    }
+    await gmail.users.messages.send({
+      userId: "support@stoneandchalk.com.au",
+      requestBody: {
+        raw: Buffer.from(
+          `To: ${assigneeEmail}\r\nSubject: Review Required: ${subject}\r\n\r\n${emailBody}`
+        ).toString("base64").replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+      },
+    });
+
+    console.log(`✉️ Review email sent to: ${assigneeEmail}`);
+  } catch (err) {
+    console.error("🚨 Failed to send review email:", err.response?.data || err.message);
   }
 }
 
-// ---- Post to Confluence manually after approval ----
-async function postToConfluence(subject, summary) {
-  try {
-    await axios.post(
-      `${CONFLUENCE_BASE_URL}/rest/api/content/`,
-      {
-        type: "page",
-        title: `KB Draft - ${subject}`,
-        space: { key: CONFLUENCE_SPACE },
-        body: {
-          storage: {
-            value: `<p>${summary}</p>`,
-            representation: "storage",
+// ---- Post approved summaries to Confluence ----
+async function postToConfluence() {
+  if (reviewQueue.length === 0) {
+    console.log("📭 No emails in review queue.");
+    return;
+  }
+
+  for (const item of reviewQueue) {
+    try {
+      await axios.post(
+        `${CONFLUENCE_BASE_URL}/rest/api/content/`,
+        {
+          type: "page",
+          title: `KB Draft - ${item.subject}`,
+          space: { key: CONFLUENCE_SPACE },
+          body: {
+            storage: {
+              value: `<p>${item.body}</p>`,
+              representation: "storage",
+            },
           },
         },
-      },
-      {
-        auth: {
-          username: CONFLUENCE_USER,
-          password: CONFLUENCE_API_KEY,
-        },
-        headers: { "Content-Type": "application/json" },
-      }
-    );
-    console.log(`✅ Confluence draft created for: ${subject}`);
-  } catch (err) {
-    console.error(`🚨 Failed to create Confluence page for: ${subject}`, err.response?.data || err.message);
+        {
+          auth: {
+            username: CONFLUENCE_USER,
+            password: CONFLUENCE_API_KEY,
+          },
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+      console.log(`✅ Confluence draft created for: ${item.subject}`);
+    } catch (err) {
+      console.error(`🚨 Failed to create Confluence page for: ${item.subject}`, err.response?.data || err.message);
+    }
   }
+
+  reviewQueue = [];
 }
 
-// ---- Poll Gmail every minute ----
+// ---- Intervals ----
 setInterval(pollEmails, POLL_INTERVAL);
 
-// ---- Review queue processing every 2 minutes ----
-setInterval(processReviewQueue, 2 * 60 * 1000);
-
-// ---- Manual endpoint to post after review ----
+// Manual endpoint to post review queue
 app.post("/review/post", async (req, res) => {
-  const { subject, summary } = req.body;
-  await postToConfluence(subject, summary);
-
-  // Remove from review queue
-  state.reviewQueue = state.reviewQueue.filter((i) => i.subject !== subject);
-  saveState();
-
-  res.send(`✅ Posted ${subject} to Confluence.`);
+  await postToConfluence();
+  res.send("✅ Review queue posted to Confluence.");
 });
 
 app.get("/", (req, res) => {
