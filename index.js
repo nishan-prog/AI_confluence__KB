@@ -70,12 +70,12 @@ const CONFLUENCE_USER = process.env.CONFLUENCE_USER;
 const CONFLUENCE_SPACE = process.env.CONFLUENCE_SPACE;
 
 // ---- Jira API setup ----
-const JIRA_BASE_URL = process.env.JIRA_SITE ? process.env.JIRA_SITE.replace(/\/$/, '') : null;
+const JIRA_BASE_URL = process.env.JIRA_BASE_URL ? process.env.JIRA_BASE_URL.replace(/\/$/, '') : null;
 const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
 const JIRA_USER_EMAIL = process.env.JIRA_USER_EMAIL;
 
 if (!JIRA_BASE_URL) {
-  console.error("❌ Missing JIRA_SITE environment variable");
+  console.error("❌ Missing JIRA_BASE_URL environment variable");
   process.exit(1);
 }
 if (!JIRA_API_TOKEN) {
