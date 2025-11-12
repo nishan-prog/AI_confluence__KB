@@ -92,8 +92,8 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // fallback to last 5 days
-    const jql = `project = SC AND statusCategory = Done AND updated >= "${new Date(lastPoll).toISOString()}" ORDER BY updated DESC`;
+    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // fallback to 5 days
+const jql = `project = SC AND statusCategory = Done AND updated >= "${new Date(lastPoll).toISOString().slice(0,19).replace("T"," ")}" ORDER BY updated DESC`;
 
     console.log("🔍 Using JQL:", jql);
 
