@@ -96,8 +96,8 @@ async function pollJiraTickets() {
     const jql = `status = Resolved AND resolved >= "${new Date(lastPoll).toISOString()}" ORDER BY resolved DESC`;
 
     const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
-      { jql, maxResults: 20 },
+      `${JIRA_BASE_URL}/rest/api/3/search/jql`, // POST endpoint for JQL search
+      { jql, maxResults: 20 },                  // body instead of query params
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: { "Accept": "application/json" },
@@ -122,7 +122,6 @@ async function pollJiraTickets() {
         processedEmails.add(issueKey);
       }
     }
-
    // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
