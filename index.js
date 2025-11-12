@@ -123,7 +123,7 @@ async function pollJiraTickets() {
       }
     }
 
-    // Update last poll timestamp
+   // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
 
@@ -132,15 +132,6 @@ async function pollJiraTickets() {
   }
 }
 
-
-    // Update last poll timestamp
-    state.lastPollTimestamp = Date.now();
-    saveState();
-
-  } catch (err) {
-    console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
-  }
-}
 
 // ---- Send review email ----
 async function sendReviewEmail(assigneeEmail, subject, summary) {
