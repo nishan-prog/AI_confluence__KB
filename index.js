@@ -92,41 +92,31 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // default 5 days back
-    const jql = `
-      project = SC
-AND statusCategory = Done
-AND updated >= "2025-11-07T03:26:06.592Z"
-ORDER BY updated DESC
-`;
+    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // fallback to last 5 days
+    const jql = `project = SC AND statusCategory = Done AND updated >= "${new Date(lastPoll).toISOString()}" ORDER BY updated DESC`;
 
-    console.log("🔍 Using JQL:", jql.trim());
+    console.log("🔍 Using JQL:", jql);
 
     const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
-      {
-        jql,
-        maxResults: 20,
-        fields: ["summary", "assignee", "status", "resolutiondate"],
-      },
+      `${JIRA_BASE_URL}/rest/api/3/search`,
+      { jql, maxResults: 20 },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
-        },
+        headers: { "Accept": "application/json" },
       }
     );
 
     const issues = res.data.issues || [];
-    console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
+    console.log(`📋 Found ${issues.length} recently updated ticket(s).`);
 
     for (const issue of issues) {
       const issueKey = issue.key;
+      const status = issue.fields.status?.name;
       const assigneeEmail = issue.fields.assignee?.emailAddress;
       const summary = issue.fields.summary;
 
-      if (assigneeEmail && !processedEmails.has(issueKey)) {
+      // Only process tickets that are actually "Resolved" and not already processed
+      if (status === "Resolved" && assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
         reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
 
