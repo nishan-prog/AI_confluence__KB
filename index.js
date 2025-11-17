@@ -92,20 +92,20 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    // Fallback: 5 days ago if no last poll
-    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; 
-    const pollDate = new Date(lastPoll);
-    const jqlDate = `${pollDate.getFullYear()}-${String(pollDate.getMonth()+1).padStart(2,'0')}-${String(pollDate.getDate()).padStart(2,'0')} ${String(pollDate.getHours()).padStart(2,'0')}:${String(pollDate.getMinutes()).padStart(2,'0')}`;
+    // Look back 5 days if no lastPollTimestamp
+    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000;
+    const jqlDate = new Date(lastPoll).toISOString().split('.')[0]; // remove milliseconds
 
-    const jql = `project = SC AND statusCategory = Done AND updated >= "${jqlDate}" ORDER BY updated DESC`;
+    const jql = `project = SC AND statusCategory = Done AND resolutiondate >= "${jqlDate}" ORDER BY resolutiondate DESC`;
     console.log("🔍 Using JQL:", jql);
 
+    // POST request to /rest/api/3/search/jql
     const res = await axios.post(
       `${JIRA_BASE_URL}/rest/api/3/search/jql`,
       { jql, maxResults: 20 },
-      { 
+      {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: { "Accept": "application/json" }
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
       }
     );
 
