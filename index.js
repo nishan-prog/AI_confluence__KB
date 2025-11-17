@@ -90,13 +90,11 @@ if (!JIRA_USER) {
 // ---- Poll Jira for recently resolved tickets ----
 async function pollJiraTickets() {
   try {
-    console.log("🔍 Polling Jira for recently resolved tickets...");
-
-    // Default to 5 days ago if first run
     const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000;
-    const jqlDate = new Date(lastPoll).toISOString().split('.')[0]; // remove milliseconds for Jira
+    const jqlDate = new Date(lastPoll).toISOString(); // ensures correct format
     const jql = `project = SC AND statusCategory = Done AND resolutiondate >= "${jqlDate}" ORDER BY resolutiondate DESC`;
 
+    console.log("🔍 Polling Jira for recently resolved tickets...");
     console.log("🔍 Using JQL:", jql);
 
     const res = await axios.post(
@@ -109,13 +107,8 @@ async function pollJiraTickets() {
     );
 
     console.log("📦 Raw Jira API response:", JSON.stringify(res.data, null, 2));
-
-    if (res.data.warningMessages) {
-      console.warn("⚠️ Jira API warnings:", res.data.warningMessages);
-    }
-    if (res.data.errorMessages) {
-      console.error("🚨 Jira API errors:", res.data.errorMessages);
-    }
+    if (res.data.warningMessages) console.warn("Jira API warnings:", res.data.warningMessages);
+    if (res.data.errorMessages) console.error("Jira API errors:", res.data.errorMessages);
 
     const issues = res.data.issues || [];
     console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
@@ -139,7 +132,6 @@ async function pollJiraTickets() {
     // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
-
   } catch (err) {
     console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
   }
