@@ -91,8 +91,12 @@ if (!JIRA_USER) {
 async function pollJiraTickets() {
   try {
     const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000;
-    const jqlDate = new Date(lastPoll).toISOString(); // ensures correct format
-    const jql = `project = SC AND statusCategory = Done AND resolutiondate >= "${jqlDate}" ORDER BY resolutiondate DESC`;
+
+    // API-compatible format
+    const jqlDate = new Date(lastPoll).toISOString();
+
+    // FINAL, CORRECT JQL
+    const jql = `project = SC AND statusCategory = Done AND updated >= "${jqlDate}" ORDER BY updated DESC`;
 
     console.log("🔍 Polling Jira for recently resolved tickets...");
     console.log("🔍 Using JQL:", jql);
@@ -107,22 +111,21 @@ async function pollJiraTickets() {
     );
 
     console.log("📦 Raw Jira API response:", JSON.stringify(res.data, null, 2));
-    if (res.data.warningMessages) console.warn("Jira API warnings:", res.data.warningMessages);
-    if (res.data.errorMessages) console.error("Jira API errors:", res.data.errorMessages);
 
     const issues = res.data.issues || [];
     console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
 
+    // Process tickets...
     for (const issue of issues) {
       const issueKey = issue.key;
-      const assigneeEmail = issue.fields.assignee?.emailAddress;
       const summary = issue.fields.summary;
+      const assigneeEmail = issue.fields.assignee?.emailAddress;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
         reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
 
-        console.log(`📝 Ticket added to review queue: [${issueKey}] ${summary}`);
+        console.log(`📝 Added to review queue: ${issueKey}`);
         await sendReviewEmail(assigneeEmail, `[${issueKey}] ${summary}`, body);
 
         processedEmails.add(issueKey);
@@ -130,10 +133,11 @@ async function pollJiraTickets() {
     }
 
     // Update last poll timestamp
-    state.lastPollTimestamp = Date.now();
+   state.lastPollTimestamp = Date.now();
     saveState();
+
   } catch (err) {
-    console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
+    console.error("🚨 Error polling Jira:", err.response?.data || err.message);
   }
 }
 
