@@ -92,22 +92,19 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk for recently resolved tickets...");
 
-    // Use last poll timestamp or fallback to 5 days ago
     const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000;
-    const jqlDate = new Date(lastPoll).toISOString().split("T")[0]; // YYYY-MM-DD
-    const jql = `project = SC AND requestStatus = Resolved AND updated >= "${jqlDate}" ORDER BY updated DESC`;
+    const fromDate = new Date(lastPoll).toISOString().split("T")[0]; // YYYY-MM-DD
 
-    console.log("🔍 Using JQL:", jql);
-
-    const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/servicedeskapi/request/search`,
-      { jql, limit: 20, start: 0 },
+    // Use query params for resolved tickets
+    const res = await axios.get(
+      `${JIRA_BASE_URL}/rest/servicedeskapi/request`,
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: { 
-          "Accept": "application/json",
-          "Content-Type": "application/json"
-        },
+        headers: { Accept: "application/json" },
+        params: {
+          query: `status = Resolved AND updated >= "${fromDate}"`,
+          limit: 20
+        }
       }
     );
 
