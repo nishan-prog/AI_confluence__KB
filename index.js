@@ -87,37 +87,36 @@ if (!JIRA_USER) {
   process.exit(1);
 }
 
-// ---- Poll Jira for recently resolved tickets ----
+// ---- Poll Jira Service Desk for recently resolved tickets ----
+const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // Set this in your .env
+const MAX_RESULTS = 20;
+
 async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk queue...");
 
-    const serviceDeskId = 1; // confirmed from dev tools
-    const queueId = 114;     // your queue ID from URL
-
-    const url = `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${serviceDeskId}/queue/${queueId}/issue`;
-
-    const res = await axios.get(url, {
-      auth: {
-        username: JIRA_USER,
-        password: JIRA_API_TOKEN,
-      },
-      headers: {
-        "Accept": "application/json"
+    // Fetch recently resolved requests
+    const res = await axios.get(
+      `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/request`,
+      {
+        auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
+        headers: { Accept: "application/json" },
+        params: {
+          status: "Resolved",
+          limit: MAX_RESULTS
+        }
       }
-    });
-
-    console.log("📦 Raw Jira JSM response:", JSON.stringify(res.data, null, 2));
+    );
 
     const issues = res.data.values || [];
-    console.log(`📋 Found ${issues.length} ticket(s) in queue.`);
+    console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
 
     for (const issue of issues) {
-      const issueKey = issue.key;
-      const summary = issue.fields.summary;
-      const assigneeEmail = issue.fields.assignee?.emailAddress || JIRA_USER;
+      const issueKey = issue.issueKey;
+      const summary = issue.summary;
+      const assigneeEmail = issue.requestFieldValues?.find(f => f.fieldId === "assignee")?.value || JIRA_USER;
 
-      if (!processedEmails.has(issueKey)) {
+      if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
         reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
 
@@ -127,12 +126,13 @@ async function pollJiraTickets() {
         processedEmails.add(issueKey);
       }
     }
+
     // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
 
   } catch (err) {
-    console.error("🚨 Error polling JSM queue:", err.response?.data || err.message);
+    console.error("🚨 Error polling Jira Service Desk queue:", err.response?.data || err.message);
   }
 }
 
