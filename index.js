@@ -90,15 +90,10 @@ if (!JIRA_USER) {
 // ---- Poll Jira for recently resolved tickets ----
 async function pollJiraTickets() {
   try {
-    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000;
-
-    // API-compatible format
-    const jqlDate = new Date(lastPoll).toISOString();
-
-    // FINAL, CORRECT JQL
+    const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000; // 5 days back
+    const jqlDate = new Date(lastPoll).toISOString().split("T")[0]; // YYYY-MM-DD only
     const jql = `project = SC AND statusCategory = Done AND updated >= "${jqlDate}" ORDER BY updated DESC`;
 
-    console.log("🔍 Polling Jira for recently resolved tickets...");
     console.log("🔍 Using JQL:", jql);
 
     const res = await axios.post(
@@ -115,29 +110,27 @@ async function pollJiraTickets() {
     const issues = res.data.issues || [];
     console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
 
-    // Process tickets...
     for (const issue of issues) {
       const issueKey = issue.key;
-      const summary = issue.fields.summary;
       const assigneeEmail = issue.fields.assignee?.emailAddress;
+      const summary = issue.fields.summary;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
         reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
 
-        console.log(`📝 Added to review queue: ${issueKey}`);
+        console.log(`📝 Ticket added to review queue: [${issueKey}] ${summary}`);
         await sendReviewEmail(assigneeEmail, `[${issueKey}] ${summary}`, body);
 
         processedEmails.add(issueKey);
       }
     }
-
     // Update last poll timestamp
    state.lastPollTimestamp = Date.now();
     saveState();
 
   } catch (err) {
-    console.error("🚨 Error polling Jira:", err.response?.data || err.message);
+    console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
   }
 }
 
