@@ -100,9 +100,9 @@ async function pollJiraTickets() {
     const jql = `project = SC AND statusCategory = Done AND updated >= "${jqlDate}" ORDER BY updated DESC`;
     console.log("🔍 Using JQL:", jql);
 
-    // Use Jira Cloud REST API /rest/api/3/search with POST
+    // Use Jira Cloud REST API /rest/api/3/search/jql with POST
     const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/api/3/search`,
+      `${JIRA_BASE_URL}/rest/api/3/search/jql,
       { jql, maxResults: 20 },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
