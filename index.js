@@ -92,17 +92,15 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira for recently resolved tickets...");
 
-    // Default to 5 days ago if no last poll timestamp
     const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000;
     const jqlDate = new Date(lastPoll).toISOString().split("T")[0]; // YYYY-MM-DD
 
-    // Construct JQL for Jira search
     const jql = `project = SC AND statusCategory = Done AND updated >= "${jqlDate}" ORDER BY updated DESC`;
     console.log("🔍 Using JQL:", jql);
 
-    // Use Jira Cloud REST API /rest/api/3/search/jql with POST
+    // Use the new /rest/api/3/search/jql POST endpoint
     const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/api/3/search/jql,
+      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
       { jql, maxResults: 20 },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
