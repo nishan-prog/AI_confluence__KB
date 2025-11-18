@@ -87,36 +87,38 @@ if (!JIRA_USER) {
   process.exit(1);
 }
 
-// ---- Poll Jira Service Desk for recently resolved tickets ----
+// ---- Poll Jira for recently resolved tickets ----
 async function pollJiraTickets() {
   try {
-    console.log("🔍 Polling Jira Service Desk for recently resolved tickets...");
+    console.log("🔍 Polling Jira for recently resolved tickets...");
 
+    // Default to 5 days ago if no last poll timestamp
     const lastPoll = state.lastPollTimestamp || Date.now() - 5 * 24 * 60 * 60 * 1000;
-    const fromDate = new Date(lastPoll).toISOString().split("T")[0]; // YYYY-MM-DD
+    const jqlDate = new Date(lastPoll).toISOString().split("T")[0]; // YYYY-MM-DD
 
-    // Use query params for resolved tickets
-    const res = await axios.get(
-      `${JIRA_BASE_URL}/rest/servicedeskapi/request`,
+    // Construct JQL for Jira search
+    const jql = `project = SC AND statusCategory = Done AND updated >= "${jqlDate}" ORDER BY updated DESC`;
+    console.log("🔍 Using JQL:", jql);
+
+    // Use Jira Cloud REST API /rest/api/3/search with POST
+    const res = await axios.post(
+      `${JIRA_BASE_URL}/rest/api/3/search`,
+      { jql, maxResults: 20 },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: { Accept: "application/json" },
-        params: {
-          query: `status = Resolved AND updated >= "${fromDate}"`,
-          limit: 20
-        }
       }
     );
 
-    console.log("📦 Raw Jira Service Desk API response:", JSON.stringify(res.data, null, 2));
+    console.log("📦 Raw Jira API response:", JSON.stringify(res.data, null, 2));
 
-    const issues = res.data.values || [];
+    const issues = res.data.issues || [];
     console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
 
     for (const issue of issues) {
-      const issueKey = issue.issueKey;
-      const assigneeEmail = issue.requestFieldValues?.find(f => f.fieldId === "assignee")?.value || JIRA_USER;
-      const summary = issue.summary;
+      const issueKey = issue.key;
+      const assigneeEmail = issue.fields.assignee?.emailAddress || JIRA_USER;
+      const summary = issue.fields.summary;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
@@ -134,7 +136,7 @@ async function pollJiraTickets() {
     saveState();
 
   } catch (err) {
-    console.error("🚨 Error polling Jira Service Desk tickets:", err.response?.data || err.message);
+    console.error("🚨 Error polling Jira tickets:", err.response?.data || err.message);
   }
 }
 
