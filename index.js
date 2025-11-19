@@ -108,6 +108,19 @@ async function pollJiraTickets() {
 
     const issues = res.data.values || [];
     console.log(`📋 Fetched ${issues.length} ticket(s) from Service Desk.`);
+    // ---- DEBUG: Log structure of first issue to identify correct status path ----
+if (issues.length > 0) {
+  console.log("🐞 DEBUG: First issue raw fields:");
+  console.log(JSON.stringify({
+    key: issues[0].key,
+    fields: issues[0].fields,
+    status: issues[0].fields?.status,
+    currentStatus: issues[0].currentStatus,
+    resolution: issues[0].fields?.resolution,
+    resolutiondate: issues[0].fields?.resolutiondate
+  }, null, 2));
+}
+
 
     // ---- Extract proper status + resolution date ----
     const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
