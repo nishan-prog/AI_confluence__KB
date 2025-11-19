@@ -89,36 +89,36 @@ if (!JIRA_USER) {
 
 // ---- Poll Jira Service Desk for recently resolved tickets ----
 const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
-const QUEUE_ID = process.env.JIRA_QUEUE_ID; // e.g., "114"
 const MAX_RESULTS = 20;
 
 async function pollJiraTickets() {
   try {
-    console.log("🔍 Polling Jira Service Desk queue...");
+    console.log("🔍 Polling Jira Service Desk for resolved tickets...");
 
+    // Fetch all requests from the service desk
     const res = await axios.get(
-      `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/queue/${QUEUE_ID}/issue`,
+      `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/request`,
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: { Accept: "application/json" },
-        params: { limit: MAX_RESULTS } // only 'limit' allowed
+        params: { limit: MAX_RESULTS } // Keep it minimal
       }
     );
 
     const issues = res.data.values || [];
-    console.log(`📋 Fetched ${issues.length} ticket(s) from queue.`);
+    console.log(`📋 Fetched ${issues.length} ticket(s) from Service Desk.`);
 
     // Filter resolved tickets in code
     const resolvedTickets = issues.filter(
-      issue => issue.customfield_10010?.currentStatus?.status?.name === "Resolved"
+      issue => issue.currentStatus?.status === "Resolved"
     );
 
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
 
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
-      const summary = issue.fields.summary;
-      const assigneeEmail = issue.fields.assignee?.emailAddress || JIRA_USER;
+      const summary = issue.requestType?.name || issue.fields?.summary || "No Summary";
+      const assigneeEmail = issue.assignee?.emailAddress || JIRA_USER;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
@@ -131,15 +131,18 @@ async function pollJiraTickets() {
       }
     }
 
-
     // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
 
   } catch (err) {
-    console.error("🚨 Error polling Jira Service Desk queue:", err.response?.data || err.message);
+    console.error(
+      "🚨 Error polling Jira Service Desk queue:",
+      err.response?.data || err.message
+    );
   }
 }
+
 
 
 
