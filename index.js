@@ -88,33 +88,39 @@ if (!JIRA_USER) {
 }
 
 // ---- Poll Jira Service Desk for recently resolved tickets ----
-const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // Set this in your .env
+const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
+const QUEUE_ID = process.env.JIRA_QUEUE_ID; // e.g., "114"
 const MAX_RESULTS = 20;
 
 async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk queue...");
 
-    // Fetch recently resolved requests
+    // Fetch issues from the queue
     const res = await axios.get(
-      `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/request`,
+      `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/queue/${QUEUE_ID}/issue`,
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: { Accept: "application/json" },
-        params: {
-          status: "Resolved",
-          limit: MAX_RESULTS
-        }
+        params: { limit: MAX_RESULTS }
       }
     );
 
     const issues = res.data.values || [];
-    console.log(`📋 Found ${issues.length} recently resolved ticket(s).`);
+    console.log(`📋 Fetched ${issues.length} ticket(s) from queue.`);
 
-    for (const issue of issues) {
-      const issueKey = issue.issueKey;
-      const summary = issue.summary;
-      const assigneeEmail = issue.requestFieldValues?.find(f => f.fieldId === "assignee")?.value || JIRA_USER;
+    // Filter for Resolved tickets
+    const resolvedTickets = issues.filter(
+      issue => issue.fields.customfield_10010?.currentStatus?.status?.name === "Resolved"
+    );
+
+    console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
+
+    for (const issue of resolvedTickets) {
+      const issueKey = issue.key;
+      const summary = issue.fields.summary;
+      const assigneeEmail =
+        issue.fields.assignee?.emailAddress || JIRA_USER;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
@@ -135,6 +141,7 @@ async function pollJiraTickets() {
     console.error("🚨 Error polling Jira Service Desk queue:", err.response?.data || err.message);
   }
 }
+
 
 
 
