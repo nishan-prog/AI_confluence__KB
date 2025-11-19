@@ -102,7 +102,7 @@ async function pollJiraTickets() {
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: { Accept: "application/json" },
-        params: { limit: MAX_RESULTS }
+        params: { start: 0, limit: MAX_RESULTS } // correct pagination params
       }
     );
 
@@ -119,8 +119,7 @@ async function pollJiraTickets() {
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
       const summary = issue.fields.summary;
-      const assigneeEmail =
-        issue.fields.assignee?.emailAddress || JIRA_USER;
+      const assigneeEmail = issue.fields.assignee?.emailAddress || JIRA_USER;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
@@ -132,6 +131,7 @@ async function pollJiraTickets() {
         processedEmails.add(issueKey);
       }
     }
+
 
     // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
