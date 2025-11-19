@@ -98,23 +98,27 @@ async function pollJiraTickets() {
     // Fetch all requests from the service desk
     const QUEUE_ID = "114"; // your specific queue
 
-const res = await axios.get(
-  `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/queue/${QUEUE_ID}/issue`,
-  {
-    auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-    headers: { Accept: "application/json" },
-    params: { limit: MAX_RESULTS }
-  }
-);
-
+    const res = await axios.get(
+      `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/queue/${QUEUE_ID}/issue`,
+      {
+        auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
+        headers: { Accept: "application/json" },
+        params: { limit: MAX_RESULTS }
+      }
+    );
 
     const issues = res.data.values || [];
     console.log(`📋 Fetched ${issues.length} ticket(s) from Service Desk.`);
 
-    // Filter resolved tickets in code
-    const resolvedTickets = issues.filter(
-      issue => issue.currentStatus?.status === "Resolved"
-    );
+    const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    // Filter resolved tickets updated in last 5 days
+    const resolvedTickets = issues.filter(issue => {
+      const status = issue.currentStatus?.status;
+      const updatedAt = new Date(issue.currentStatus?.statusDate?.iso8601 || issue.fields?.updated).getTime();
+      return status === "Resolved" && (now - updatedAt) <= FIVE_DAYS_MS;
+    });
 
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
 
@@ -135,7 +139,7 @@ const res = await axios.get(
     }
 
     // Update last poll timestamp
-    state.lastPollTimestamp = Date.now();
+    state.lastPollTimestamp = now;
     saveState();
 
   } catch (err) {
