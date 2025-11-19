@@ -88,67 +88,42 @@ if (!JIRA_USER) {
 }
 
 // ---- Poll Jira Service Desk for recently resolved tickets ----
-const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
+const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // still here if needed elsewhere
 const MAX_RESULTS = 20;
 
 async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk for resolved tickets...");
 
-    const QUEUE_ID = "114"; // your specific queue
+    // --- Use JQL to fetch resolved tickets from last 5 days ---
+    const jql = `project = SC AND status = Resolved AND resolved >= -5d ORDER BY resolved DESC`;
 
-    const res = await axios.get(
-      `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/queue/${QUEUE_ID}/issue`,
-      {
-        auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: { Accept: "application/json" },
-        params: { limit: MAX_RESULTS }
+    const res = await axios.get(`${JIRA_BASE_URL}/rest/api/2/search`, {
+      auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
+      headers: { Accept: "application/json" },
+      params: {
+        jql,
+        maxResults: MAX_RESULTS,
+        fields: "summary,status,resolution,resolutiondate,assignee"
       }
-    );
-
-    const issues = res.data.values || [];
-    console.log(`📋 Fetched ${issues.length} ticket(s) from Service Desk.`);
-    // ---- DEBUG: Log structure of first issue to identify correct status path ----
-if (issues.length > 0) {
-  console.log("🐞 DEBUG: First issue raw fields:");
-  console.log(JSON.stringify({
-    key: issues[0].key,
-    fields: issues[0].fields,
-    status: issues[0].fields?.status,
-    currentStatus: issues[0].currentStatus,
-    resolution: issues[0].fields?.resolution,
-    resolutiondate: issues[0].fields?.resolutiondate
-  }, null, 2));
-}
-
-
-    // ---- Extract proper status + resolution date ----
-    const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
-
-    const resolvedTickets = issues.filter(issue => {
-      const statusName = issue.fields?.status?.name;
-      const resolutionDate = issue.fields?.resolutiondate
-        ? new Date(issue.fields.resolutiondate).getTime()
-        : null;
-
-      return (
-        statusName === "Resolved" &&
-        resolutionDate &&
-        resolutionDate >= fiveDaysAgo
-      );
     });
 
+    const issues = res.data.issues || [];
+    console.log(`📋 Fetched ${issues.length} resolved ticket(s) (via JQL).`);
+
+    // No filtering — JQL already guarantees resolved tickets within 5 days
+    const resolvedTickets = issues;
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
 
+    // ---- Process resolved tickets ----
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
       const summary =
-        issue.requestType?.name ||
         issue.fields?.summary ||
         "No Summary";
 
       const assigneeEmail =
-        issue.assignee?.emailAddress || JIRA_USER;
+        issue.fields?.assignee?.emailAddress || JIRA_USER;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
@@ -167,11 +142,12 @@ if (issues.length > 0) {
 
   } catch (err) {
     console.error(
-      "🚨 Error polling Jira Service Desk queue:",
+      "🚨 Error polling Jira Service Desk (JQL):",
       err.response?.data || err.message
     );
   }
 }
+
 
 
 
