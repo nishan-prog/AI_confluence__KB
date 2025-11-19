@@ -96,20 +96,19 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk queue...");
 
-    // Fetch requests from the queue
     const res = await axios.get(
       `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/queue/${QUEUE_ID}/issue`,
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: { Accept: "application/json" },
-        params: { limit: MAX_RESULTS } // Jira only accepts 'limit' here
+        params: { limit: MAX_RESULTS } // only 'limit' allowed
       }
     );
 
     const issues = res.data.values || [];
     console.log(`📋 Fetched ${issues.length} ticket(s) from queue.`);
 
-    // Filter resolved tickets
+    // Filter resolved tickets in code
     const resolvedTickets = issues.filter(
       issue => issue.customfield_10010?.currentStatus?.status?.name === "Resolved"
     );
