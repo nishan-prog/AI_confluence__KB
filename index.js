@@ -96,22 +96,22 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk queue...");
 
-    // Fetch issues from the queue
+    // Fetch requests from the queue
     const res = await axios.get(
       `${JIRA_BASE_URL}/rest/servicedeskapi/servicedesk/${SERVICE_DESK_ID}/queue/${QUEUE_ID}/issue`,
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
         headers: { Accept: "application/json" },
-        params: { start: 0, limit: MAX_RESULTS } // correct pagination params
+        params: { limit: MAX_RESULTS } // Jira only accepts 'limit' here
       }
     );
 
     const issues = res.data.values || [];
     console.log(`📋 Fetched ${issues.length} ticket(s) from queue.`);
 
-    // Filter for Resolved tickets
+    // Filter resolved tickets
     const resolvedTickets = issues.filter(
-      issue => issue.fields.customfield_10010?.currentStatus?.status?.name === "Resolved"
+      issue => issue.customfield_10010?.currentStatus?.status?.name === "Resolved"
     );
 
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
@@ -141,7 +141,6 @@ async function pollJiraTickets() {
     console.error("🚨 Error polling Jira Service Desk queue:", err.response?.data || err.message);
   }
 }
-
 
 
 
