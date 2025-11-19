@@ -95,7 +95,6 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk for resolved tickets...");
 
-    // Fetch all requests from the service desk
     const QUEUE_ID = "114"; // your specific queue
 
     const res = await axios.get(
@@ -110,22 +109,33 @@ async function pollJiraTickets() {
     const issues = res.data.values || [];
     console.log(`📋 Fetched ${issues.length} ticket(s) from Service Desk.`);
 
-    const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
+    // ---- Extract proper status + resolution date ----
+    const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
 
-    // Filter resolved tickets updated in last 5 days
     const resolvedTickets = issues.filter(issue => {
-      const status = issue.currentStatus?.status;
-      const updatedAt = new Date(issue.currentStatus?.statusDate?.iso8601 || issue.fields?.updated).getTime();
-      return status === "Resolved" && (now - updatedAt) <= FIVE_DAYS_MS;
+      const statusName = issue.fields?.status?.name;
+      const resolutionDate = issue.fields?.resolutiondate
+        ? new Date(issue.fields.resolutiondate).getTime()
+        : null;
+
+      return (
+        statusName === "Resolved" &&
+        resolutionDate &&
+        resolutionDate >= fiveDaysAgo
+      );
     });
 
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
 
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
-      const summary = issue.requestType?.name || issue.fields?.summary || "No Summary";
-      const assigneeEmail = issue.assignee?.emailAddress || JIRA_USER;
+      const summary =
+        issue.requestType?.name ||
+        issue.fields?.summary ||
+        "No Summary";
+
+      const assigneeEmail =
+        issue.assignee?.emailAddress || JIRA_USER;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
@@ -139,7 +149,7 @@ async function pollJiraTickets() {
     }
 
     // Update last poll timestamp
-    state.lastPollTimestamp = now;
+    state.lastPollTimestamp = Date.now();
     saveState();
 
   } catch (err) {
