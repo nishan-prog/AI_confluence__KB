@@ -88,37 +88,41 @@ if (!JIRA_USER) {
 }
 
 // ---- Poll Jira Service Desk for recently resolved tickets ----
-const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // still here if needed elsewhere
+const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
 const MAX_RESULTS = 20;
 
 async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk for resolved tickets...");
 
-    // --- Use JQL to fetch resolved tickets from last 5 days ---
+    // ✅ NEW: Jira Cloud JQL POST endpoint
     const jql = `project = SC AND status = Resolved AND resolved >= -5d ORDER BY resolved DESC`;
 
-    const res = await axios.get(`${JIRA_BASE_URL}/rest/api/2/search`, {
-      auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-      headers: { Accept: "application/json" },
-      params: {
-        jql,
-        maxResults: MAX_RESULTS,
-        fields: "summary,status,resolution,resolutiondate,assignee"
+    const res = await axios.post(
+      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
+      { jql, maxResults: MAX_RESULTS },
+      {
+        auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json"
+        },
+        params: {
+          fields: "summary,status,resolution,resolutiondate,assignee,requestType"
+        }
       }
-    });
+    );
 
     const issues = res.data.issues || [];
-    console.log(`📋 Fetched ${issues.length} resolved ticket(s) (via JQL).`);
+    console.log(`📋 Fetched ${issues.length} resolved ticket(s) (via JQL v3).`);
 
-    // No filtering — JQL already guarantees resolved tickets within 5 days
     const resolvedTickets = issues;
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
 
-    // ---- Process resolved tickets ----
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
       const summary =
+        issue.fields?.requestType?.name ||
         issue.fields?.summary ||
         "No Summary";
 
@@ -136,17 +140,17 @@ async function pollJiraTickets() {
       }
     }
 
-    // Update last poll timestamp
     state.lastPollTimestamp = Date.now();
     saveState();
 
   } catch (err) {
     console.error(
-      "🚨 Error polling Jira Service Desk (JQL):",
+      "🚨 Error polling Jira Service Desk (JQL v3):",
       err.response?.data || err.message
     );
   }
 }
+
 
 
 
