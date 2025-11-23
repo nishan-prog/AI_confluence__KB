@@ -99,19 +99,27 @@ async function pollJiraTickets() {
     const jql = `project = SC AND status = Resolved AND resolved >= -5d ORDER BY resolved DESC`;
 
     const res = await axios.post(
-      `${JIRA_BASE_URL}/rest/api/3/search/jql`,
-      { jql, maxResults: MAX_RESULTS },
-      {
-        auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json"
-        },
-        params: {
-          fields: "summary,status,resolution,resolutiondate,assignee,requestType"
-        }
-      }
-    );
+  `${JIRA_BASE_URL}/rest/api/3/search/jql`,
+  {
+    jql,
+    maxResults: MAX_RESULTS,
+    fields: [
+      "summary",
+      "status",
+      "resolution",
+      "resolutiondate",
+      "assignee"
+    ]
+  },
+  {
+    auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    }
+  }
+);
+
 
     const issues = res.data.issues || [];
     console.log(`📋 Fetched ${issues.length} resolved ticket(s) (via JQL v3).`);
@@ -121,17 +129,15 @@ async function pollJiraTickets() {
 
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
-      const summary =
-        issue.fields?.requestType?.name ||
-        issue.fields?.summary ||
-        "No Summary";
+      const summary = issue.fields?.summary || "No Summary";
+
 
       const assigneeEmail =
         issue.fields?.assignee?.emailAddress || JIRA_USER;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
         const body = `Gemini Summary: ${summary}`;
-        reviewQueue.push({ subject: `[${issueKey}] ${summary}`, body });
+        reviewQueue.push({ subject: `[${issue.key}] ${summary}`, body });
 
         console.log(`📝 Ticket added to review queue: [${issueKey}] ${summary}`);
         await sendReviewEmail(assigneeEmail, `[${issueKey}] ${summary}`, body);
