@@ -88,16 +88,21 @@ if (!JIRA_USER) {
 }
 
 // ---- Poll Jira Service Desk for recently resolved tickets ----
-const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
+const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; 
 const MAX_RESULTS = 20;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT; // e.g., "https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateMessage"
+const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT;
 
 async function getGeminiSummary(ticket) {
   try {
+    // Combine all comments into a single string
+    const commentsHistory = ticket.comments.length
+      ? ticket.comments.map((c, idx) => `${idx + 1}. ${c}`).join("\n")
+      : "No comments provided.";
+
     const promptText = `
-Write a Confluence-ready summary for this resolved Jira ticket. 
-Use clear, separate paragraphs for different sections so it is easy to read and copy-paste into a knowledge base page.
+Write a Confluence-ready knowledge base page for this resolved Jira ticket.
+Use clear headings, bullet points, and separate paragraphs.
 
 Ticket Key: ${ticket.key}
 Title: ${ticket.summary}
@@ -108,29 +113,19 @@ Resolution date: ${ticket.resolutiondate}
 Description:
 ${ticket.description}
 
-Latest Comment:
-${ticket.latestComment}
+Comments History:
+${commentsHistory}
 
-Resolution Notes:
+Resolution Notes (from Jira):
 ${ticket.resolutionText}
 
-Summarise clearly what was done to resolve the ticket, using bullet points or numbered steps if applicable.
-Include headings for sections like "Issue", "Troubleshooting Steps", "Resolution", "Lessons Learned" where relevant.
+Please synthesize a concise, clear summary of how the issue was resolved, highlighting actions taken and any best practices. Include headings like "Issue", "Troubleshooting Steps", "Resolution", and "Lessons Learned" where relevant.
 `;
 
     const res = await axios.post(
       GEMINI_ENDPOINT,
-      {
-        contents: [
-          { parts: [{ text: promptText }] }
-        ]
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": GEMINI_API_KEY
-        }
-      }
+      { contents: [{ parts: [{ text: promptText }] }] },
+      { headers: { "Content-Type": "application/json", "X-goog-api-key": GEMINI_API_KEY } }
     );
 
     const candidate = res.data?.candidates?.[0];
@@ -155,22 +150,13 @@ async function pollJiraTickets() {
         jql,
         maxResults: MAX_RESULTS,
         fields: [
-          "summary",
-          "status",
-          "resolution",
-          "resolutiondate",
-          "assignee",
-          "reporter",
-          "description",
-          "comment"
+          "summary", "status", "resolution", "resolutiondate",
+          "assignee", "reporter", "description", "comment"
         ]
       },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json"
-        }
+        headers: { Accept: "application/json", "Content-Type": "application/json" }
       }
     );
 
@@ -180,7 +166,7 @@ async function pollJiraTickets() {
     for (const issue of issues) {
       const fields = issue.fields;
 
-      // ---- Extract description safely ----
+      // ---- Description ----
       let description = "";
       try {
         if (fields?.description?.content) {
@@ -193,20 +179,14 @@ async function pollJiraTickets() {
       } catch {}
       if (!description) description = "No description provided.";
 
-      // ---- Extract latest comment ----
+      // ---- All comments ----
       const commentsArray = fields?.comment?.comments || [];
-      const latestComment =
-        commentsArray.length > 0
-          ? commentsArray[commentsArray.length - 1].body
-          : "No comments provided.";
+      const allComments = commentsArray.map(c => c.body || ""); // preserve all comment bodies
 
-      // ---- Extract resolution details ----
-      const resolutionText =
-        fields?.resolution?.description ||
-        fields?.resolution?.name ||
-        "No resolution details provided.";
+      // ---- Resolution ----
+      const resolutionText = fields?.resolution?.description || fields?.resolution?.name || "No resolution details provided.";
 
-      // ---- Build structured ticket object for Gemini ----
+      // ---- Build ticket object for Gemini ----
       const ticketObject = {
         key: issue.key,
         summary: fields?.summary || "No title",
@@ -214,7 +194,7 @@ async function pollJiraTickets() {
         status: fields?.status?.name || "Unknown",
         resolutiondate: fields?.resolutiondate || "Unknown",
         description,
-        latestComment,
+        comments: allComments,
         resolutionText
       };
 
@@ -223,16 +203,13 @@ async function pollJiraTickets() {
       if (assigneeEmail && !processedEmails.has(issue.key)) {
         const body = await getGeminiSummary(ticketObject);
 
-        // ---- Convert text to HTML paragraphs for email ----
+        // Convert Gemini summary to HTML paragraphs
         const summaryHTML = body
           .split("\n\n")
           .map(p => `<p>${p}</p>`)
           .join("\n");
 
-        reviewQueue.push({
-          subject: `[${issue.key}] ${ticketObject.summary}`,
-          body
-        });
+        reviewQueue.push({ subject: `[${issue.key}] ${ticketObject.summary}`, body });
 
         await sendReviewEmail(
           assigneeEmail,
@@ -249,10 +226,7 @@ async function pollJiraTickets() {
     saveState();
 
   } catch (err) {
-    console.error(
-      "🚨 Error polling Jira Service Desk (JQL v3):",
-      err.response?.data || err.message
-    );
+    console.error("🚨 Error polling Jira Service Desk (JQL v3):", err.response?.data || err.message);
   }
 }
 
