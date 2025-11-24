@@ -91,12 +91,13 @@ if (!JIRA_USER) {
 const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
 const MAX_RESULTS = 20;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT; // e.g., "https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateMessage"
+const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT;
 
 async function getGeminiSummary(ticket) {
   try {
     const promptText = `
-Write a Confluence-ready summary for this resolved Jira ticket.
+Write a Confluence-ready Knowledge Base page for this resolved Jira ticket.
+Focus on making it easy for another user to follow these steps.
 
 Key: ${ticket.key}
 Title: ${ticket.summary}
@@ -113,46 +114,54 @@ ${ticket.latestComment}
 Resolution Notes:
 ${ticket.resolutionText}
 
-Please summarise clearly what was done to resolve the ticket, focusing on actions taken.
+Summarise clearly what was done to resolve the ticket, as step-by-step instructions.
 `;
-
-
     const res = await axios.post(
-  process.env.GEMINI_ENDPOINT,
-  {
-    contents: [
-      { parts: [ { text: promptText } ] }
-    ]
-  },
-  {
-    headers: {
-      "Content-Type": "application/json",
-      "X-goog-api-key": process.env.GEMINI_API_KEY
-    }
-  }
-);
-
+      GEMINI_ENDPOINT,
+      {
+        contents: [{ parts: [{ text: promptText }] }]
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-goog-api-key": GEMINI_API_KEY
+        }
+      }
+    );
 
     const candidate = res.data?.candidates?.[0];
-    const summary = candidate?.content?.parts?.map(p => p.text).join("") || ticket.fields.summary;
-    return summary;
+    const summary = candidate?.content?.parts?.map(p => p.text).join("") || ticket.summary;
+
+    // ---- Wrap Gemini output in Confluence KB format ----
+    const confluenceKB = `
+h1. ${ticket.key}: ${ticket.summary}
+
+*Raised by:* ${ticket.reporter}  
+*Status:* ${ticket.status}  
+*Resolution Date:* ${ticket.resolutiondate}  
+
+h2. Summary
+${summary}
+
+h2. Resolution Steps
+${ticket.latestComment}
+
+h2. Notes / Further Information
+${ticket.description}
+`;
+    return confluenceKB;
 
   } catch (err) {
     console.error("🚨 Error generating Gemini summary:", err.response?.data || err.message);
-    return ticket.fields.summary;
+    return ticket.summary;
   }
 }
-
-
-
 
 async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk for resolved tickets...");
 
-    // ✅ Use JQL to fetch resolved tickets from last 5 days
     const jql = `project = SC AND status = Resolved AND resolved >= -5d ORDER BY resolved DESC`;
-
     const res = await axios.post(
       `${JIRA_BASE_URL}/rest/api/3/search/jql`,
       {
@@ -165,7 +174,8 @@ async function pollJiraTickets() {
           "resolutiondate",
           "assignee",
           "reporter",
-          "description"
+          "description",
+          "comment"
         ]
       },
       {
@@ -180,73 +190,61 @@ async function pollJiraTickets() {
     const issues = res.data.issues || [];
     console.log(`📋 Fetched ${issues.length} resolved ticket(s) (via JQL v3).`);
 
-    const resolvedTickets = issues;
-    console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
+    for (const issue of issues) {
+      const fields = issue.fields;
 
-    for (const issue of resolvedTickets) {
-  const fields = issue.fields;
+      // ---- Extract description safely ----
+      let description = "";
+      try {
+        if (fields?.description?.content) {
+          description = fields.description.content
+            .map(c => c?.content?.map(p => p.text).join(" "))
+            .join("\n");
+        } else if (typeof fields?.description === "string") {
+          description = fields.description;
+        }
+      } catch {}
+      if (!description) description = "No description provided.";
 
-  // ---- Extract description safely (supports Jira rich text) ----
-  let description = "";
+      // ---- Extract latest comment ----
+      const commentsArray = fields?.comment?.comments || [];
+      const latestComment =
+        commentsArray.length > 0
+          ? commentsArray[commentsArray.length - 1].body
+          : "No steps provided.";
 
-  try {
-    if (fields?.description?.content) {
-      description = fields.description.content
-        .map(c => c?.content?.map(p => p.text).join(" "))
-        .join("\n");
-    } else if (typeof fields?.description === "string") {
-      description = fields.description;
+      const resolutionText =
+        fields?.resolution?.description ||
+        fields?.resolution?.name ||
+        "No resolution details provided.";
+
+      const ticketObject = {
+        key: issue.key,
+        summary: fields?.summary || "No title",
+        reporter: fields?.reporter?.displayName || "Unknown",
+        status: fields?.status?.name || "Unknown",
+        resolutiondate: fields?.resolutiondate || "Unknown",
+        description,
+        latestComment,
+        resolutionText
+      };
+
+      const assigneeEmail = fields?.assignee?.emailAddress || JIRA_USER;
+
+      if (assigneeEmail && !processedEmails.has(issue.key)) {
+        const body = await getGeminiSummary(ticketObject);
+
+        reviewQueue.push({
+          subject: `[${issue.key}] ${ticketObject.summary}`,
+          body
+        });
+
+        console.log(`📝 Ticket added to review queue: [${issue.key}] ${ticketObject.summary}`);
+        await sendReviewEmail(assigneeEmail, `[${issue.key}] ${ticketObject.summary}`, body);
+
+        processedEmails.add(issue.key);
+      }
     }
-  } catch {}
-
-  if (!description) description = "No description provided.";
-
-  // ---- Extract latest comment ----
-  const commentsArray = fields?.comment?.comments || [];
-  const latestComment =
-    commentsArray.length > 0
-      ? commentsArray[commentsArray.length - 1].body
-      : "No comments provided.";
-
-  // ---- Extract resolution details ----
-  const resolutionText =
-    fields?.resolution?.description ||
-    fields?.resolution?.name ||
-    "No resolution details provided.";
-
-  // ---- Build structured ticket content for Gemini ----
-  const ticketObject = {
-    key: issue.key,
-    summary: fields?.summary || "No title",
-    reporter: fields?.reporter?.displayName || "Unknown",
-    status: fields?.status?.name || "Unknown",
-    resolutiondate: fields?.resolutiondate || "Unknown",
-    description,
-    latestComment,
-    resolutionText
-  };
-
-  const assigneeEmail = fields?.assignee?.emailAddress || JIRA_USER;
-
-  if (assigneeEmail && !processedEmails.has(issue.key)) {
-    const body = await getGeminiSummary(ticketObject);
-
-    reviewQueue.push({
-      subject: `[${issue.key}] ${ticketObject.summary}`,
-      body
-    });
-
-    console.log(`📝 Ticket added to review queue: [${issue.key}] ${ticketObject.summary}`);
-    await sendReviewEmail(
-      assigneeEmail,
-      `[${issue.key}] ${ticketObject.summary}`,
-      body
-    );
-
-    processedEmails.add(issue.key);
-  }
-}
-
 
     state.lastPollTimestamp = Date.now();
     saveState();
@@ -258,6 +256,7 @@ async function pollJiraTickets() {
     );
   }
 }
+
 
 
 
