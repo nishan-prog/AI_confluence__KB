@@ -117,9 +117,7 @@ Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
       `${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`,
       {
         model: "models/text-bison-001",
-        prompt: {
-          text: promptText
-        },
+        input: promptText,
         temperature: 0.3,
         candidate_count: 1
       },
