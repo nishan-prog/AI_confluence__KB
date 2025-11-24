@@ -95,37 +95,43 @@ const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT; // e.g., "https://generativ
 
 async function getGeminiSummary(ticket) {
   try {
+    // Construct a Confluence-ready summary prompt
     const prompt = `
-      Generate a concise summary for this Jira ticket:
-      Title: ${ticket.fields?.summary || "No Title"}
-      Raised by: ${ticket.fields?.reporter?.displayName || "Unknown"}
-      Assignee: ${ticket.fields?.assignee?.displayName || "Unassigned"}
-      Status: ${ticket.fields?.status?.name || "Unknown"}
-      Resolution: ${ticket.fields?.resolution?.name || "Not available"}
-      Description/Details: ${ticket.fields?.description || "No details provided"}
-      
-      Provide a summary of what was done to resolve this ticket, in 2-3 sentences.
+      Write a clear Confluence-ready summary for the following Jira ticket.
+      Include:
+      - Ticket key and title
+      - Who raised it
+      - Status
+      - What was done to resolve it
+      - Resolution date if available
+
+      Format in bullet points or short paragraphs, ready to paste into Confluence.
+
+      Ticket details:
+      Key: ${ticket.key}
+      Title: ${ticket.fields.summary}
+      Raised by: ${ticket.fields.reporter?.displayName || "Unknown"}
+      Status: ${ticket.fields.status?.name || "Unknown"}
+      Description: ${ticket.fields.description || "No detailed description"}
+      Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
     `;
 
     const res = await axios.post(
-      GEMINI_ENDPOINT,
+      `${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`,
       {
         prompt: { text: prompt },
-        temperature: 0.2,
-        maxOutputTokens: 300
+        temperature: 0.3,
+        candidate_count: 1
       },
       {
-        headers: {
-          "Authorization": `Bearer ${GEMINI_API_KEY}`,
-          "Content-Type": "application/json"
-        }
+        headers: { "Content-Type": "application/json" }
       }
     );
 
-    return res.data?.candidates?.[0]?.content?.[0]?.text || ticket.fields?.summary || "No Summary";
+    return res.data?.candidates?.[0]?.content?.[0]?.text || ticket.fields.summary;
   } catch (err) {
-    console.error("🚨 Error generating Gemini summary:", err.message);
-    return ticket.fields?.summary || "No Summary";
+    console.error("🚨 Error generating Gemini summary:", err.response?.data || err.message);
+    return ticket.fields.summary; // fallback
   }
 }
 
