@@ -90,19 +90,42 @@ if (!JIRA_USER) {
 // ---- Poll Jira Service Desk for recently resolved tickets ----
 const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
 const MAX_RESULTS = 20;
-const const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT;
-// Helper function to get Gemini summary
-async function getGeminiSummary(prompt) {
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT; // e.g., "https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateMessage"
+
+async function getGeminiSummary(ticket) {
   try {
-    const response = await axios.post(
+    const prompt = `
+      Generate a concise summary for this Jira ticket:
+      Title: ${ticket.fields?.summary || "No Title"}
+      Raised by: ${ticket.fields?.reporter?.displayName || "Unknown"}
+      Assignee: ${ticket.fields?.assignee?.displayName || "Unassigned"}
+      Status: ${ticket.fields?.status?.name || "Unknown"}
+      Resolution: ${ticket.fields?.resolution?.name || "Not available"}
+      Description/Details: ${ticket.fields?.description || "No details provided"}
+      
+      Provide a summary of what was done to resolve this ticket, in 2-3 sentences.
+    `;
+
+    const res = await axios.post(
       GEMINI_ENDPOINT,
-      { prompt },
-      { headers: { Authorization: `Bearer ${process.env.GEMINI_API_KEY}` } }
+      {
+        prompt: { text: prompt },
+        temperature: 0.2,
+        maxOutputTokens: 300
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${GEMINI_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
     );
-    return response.data.summary || "No summary generated";
+
+    return res.data?.candidates?.[0]?.content?.[0]?.text || ticket.fields?.summary || "No Summary";
   } catch (err) {
     console.error("🚨 Error generating Gemini summary:", err.message);
-    return "No summary generated";
+    return ticket.fields?.summary || "No Summary";
   }
 }
 
@@ -110,7 +133,7 @@ async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk for resolved tickets...");
 
-    // ✅ Jira Cloud JQL POST endpoint
+    // ✅ Use JQL to fetch resolved tickets from last 5 days
     const jql = `project = SC AND status = Resolved AND resolved >= -5d ORDER BY resolved DESC`;
 
     const res = await axios.post(
@@ -118,7 +141,15 @@ async function pollJiraTickets() {
       {
         jql,
         maxResults: MAX_RESULTS,
-        fields: ["summary", "status", "resolution", "resolutiondate", "assignee", "reporter", "description"]
+        fields: [
+          "summary",
+          "status",
+          "resolution",
+          "resolutiondate",
+          "assignee",
+          "reporter",
+          "description"
+        ]
       },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
@@ -137,27 +168,17 @@ async function pollJiraTickets() {
 
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
-      const title = issue.fields?.summary || "No Title";
-      const reporterName = issue.fields?.reporter?.displayName || "Unknown Reporter";
-      const description = issue.fields?.description || "No description";
-      const resolution = issue.fields?.resolution?.name || "No resolution info";
-
       const assigneeEmail = issue.fields?.assignee?.emailAddress || JIRA_USER;
 
       if (assigneeEmail && !processedEmails.has(issueKey)) {
-        // Generate Gemini summary
-        const geminiPrompt = `Summarize this Jira ticket for Confluence:
-Title: ${title}
-Raised by: ${reporterName}
-Description: ${description}
-Resolution: ${resolution}`;
-        const geminiSummary = await getGeminiSummary(geminiPrompt);
+        // ✅ Generate Gemini summary
+        const summary = await getGeminiSummary(issue);
 
-        const body = `Gemini Summary:\n${geminiSummary}`;
+        const body = `Gemini Summary:\n${summary}`;
+        reviewQueue.push({ subject: `[${issue.key}] ${issue.fields?.summary}`, body });
 
-        reviewQueue.push({ subject: `[${issueKey}] ${title}`, body });
-        console.log(`📝 Ticket added to review queue: [${issueKey}] ${title}`);
-        await sendReviewEmail(assigneeEmail, `[${issueKey}] ${title}`, body);
+        console.log(`📝 Ticket added to review queue: [${issueKey}] ${summary}`);
+        await sendReviewEmail(assigneeEmail, `[${issueKey}] ${issue.fields?.summary}`, body);
 
         processedEmails.add(issueKey);
       }
