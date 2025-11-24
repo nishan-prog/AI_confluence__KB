@@ -96,16 +96,26 @@ const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT; // e.g., "https://generativ
 async function getGeminiSummary(ticket) {
   try {
     const promptText = `
-Write a Confluence-ready summary for this Jira ticket:
-Key: ${ticket.key}
-Title: ${ticket.fields.summary}
-Raised by: ${ticket.fields.reporter?.displayName || "Unknown"}
-Status: ${ticket.fields.status?.name || "Unknown"}
-Description: ${ticket.fields.description || "No detailed description"}
-Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
+Write a Confluence-ready summary for this resolved Jira ticket.
 
-Please summarise what was done to resolve the ticket.
-    `;
+Key: ${ticket.key}
+Title: ${ticket.summary}
+Raised by: ${ticket.reporter}
+Status: ${ticket.status}
+Resolution date: ${ticket.resolutiondate}
+
+Description:
+${ticket.description}
+
+Latest Comment:
+${ticket.latestComment}
+
+Resolution Notes:
+${ticket.resolutionText}
+
+Please summarise clearly what was done to resolve the ticket, focusing on actions taken.
+`;
+
 
     const res = await axios.post(
   process.env.GEMINI_ENDPOINT,
@@ -174,38 +184,66 @@ async function pollJiraTickets() {
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
 
     for (const issue of resolvedTickets) {
-  const issueKey = issue.key;
-  const title = issue.fields?.summary || "No Summary";
+  const fields = issue.fields;
 
-  // ---- Extract description safely ----
-  let description = "No description provided.";
-  if (issue.fields?.description) {
-    description = typeof issue.fields.description === "string"
-      ? issue.fields.description
-      : JSON.stringify(issue.fields.description, null, 2); // pretty print objects
-  }
+  // ---- Extract description safely (supports Jira rich text) ----
+  let description = "";
 
-  // ---- Build full content for Gemini ----
-  const geminiInput = `
-Ticket Key: ${issueKey}
-Title: ${title}
-Raised by: ${issue.fields?.reporter?.displayName || "Unknown"}
-Status: ${issue.fields?.status?.name || "Unknown"}
-Resolution Date: ${issue.fields?.resolutiondate || "Unknown"}
-Description:
-${description}
-`;
+  try {
+    if (fields?.description?.content) {
+      description = fields.description.content
+        .map(c => c?.content?.map(p => p.text).join(" "))
+        .join("\n");
+    } else if (typeof fields?.description === "string") {
+      description = fields.description;
+    }
+  } catch {}
 
-  const assigneeEmail = issue.fields?.assignee?.emailAddress || JIRA_USER;
+  if (!description) description = "No description provided.";
 
-  if (assigneeEmail && !processedEmails.has(issueKey)) {
-    const body = await getGeminiSummary(geminiInput); // your Gemini function
-    reviewQueue.push({ subject: `[${issueKey}] ${title}`, body });
+  // ---- Extract latest comment ----
+  const commentsArray = fields?.comment?.comments || [];
+  const latestComment =
+    commentsArray.length > 0
+      ? commentsArray[commentsArray.length - 1].body
+      : "No comments provided.";
 
-    console.log(`📝 Ticket added to review queue: [${issueKey}] ${title}`);
-    await sendReviewEmail(assigneeEmail, `[${issueKey}] ${title}`, body);
+  // ---- Extract resolution details ----
+  const resolutionText =
+    fields?.resolution?.description ||
+    fields?.resolution?.name ||
+    "No resolution details provided.";
 
-    processedEmails.add(issueKey);
+  // ---- Build structured ticket content for Gemini ----
+  const ticketObject = {
+    key: issue.key,
+    summary: fields?.summary || "No title",
+    reporter: fields?.reporter?.displayName || "Unknown",
+    status: fields?.status?.name || "Unknown",
+    resolutiondate: fields?.resolutiondate || "Unknown",
+    description,
+    latestComment,
+    resolutionText
+  };
+
+  const assigneeEmail = fields?.assignee?.emailAddress || JIRA_USER;
+
+  if (assigneeEmail && !processedEmails.has(issue.key)) {
+    const body = await getGeminiSummary(ticketObject);
+
+    reviewQueue.push({
+      subject: `[${issue.key}] ${ticketObject.summary}`,
+      body
+    });
+
+    console.log(`📝 Ticket added to review queue: [${issue.key}] ${ticketObject.summary}`);
+    await sendReviewEmail(
+      assigneeEmail,
+      `[${issue.key}] ${ticketObject.summary}`,
+      body
+    );
+
+    processedEmails.add(issue.key);
   }
 }
 
