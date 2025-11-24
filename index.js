@@ -90,12 +90,27 @@ if (!JIRA_USER) {
 // ---- Poll Jira Service Desk for recently resolved tickets ----
 const SERVICE_DESK_ID = process.env.JIRA_SERVICE_DESK_ID; // e.g., "11"
 const MAX_RESULTS = 20;
+const const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT;
+// Helper function to get Gemini summary
+async function getGeminiSummary(prompt) {
+  try {
+    const response = await axios.post(
+      GEMINI_ENDPOINT,
+      { prompt },
+      { headers: { Authorization: `Bearer ${process.env.GEMINI_API_KEY}` } }
+    );
+    return response.data.summary || "No summary generated";
+  } catch (err) {
+    console.error("🚨 Error generating Gemini summary:", err.message);
+    return "No summary generated";
+  }
+}
 
 async function pollJiraTickets() {
   try {
     console.log("🔍 Polling Jira Service Desk for resolved tickets...");
 
-    // ✅ NEW: Jira Cloud JQL POST endpoint
+    // ✅ Jira Cloud JQL POST endpoint
     const jql = `project = SC AND status = Resolved AND resolved >= -5d ORDER BY resolved DESC`;
 
     const res = await axios.post(
@@ -103,15 +118,7 @@ async function pollJiraTickets() {
       {
         jql,
         maxResults: MAX_RESULTS,
-        fields: [
-          "summary",
-          "status",
-          "resolution",
-          "resolutiondate",
-          "assignee",
-          "reporter",
-          "description"
-        ]
+        fields: ["summary", "status", "resolution", "resolutiondate", "assignee", "reporter", "description"]
       },
       {
         auth: { username: JIRA_USER, password: JIRA_API_TOKEN },
@@ -131,36 +138,29 @@ async function pollJiraTickets() {
     for (const issue of resolvedTickets) {
       const issueKey = issue.key;
       const title = issue.fields?.summary || "No Title";
-      const description = issue.fields?.description || "No description provided";
       const reporterName = issue.fields?.reporter?.displayName || "Unknown Reporter";
-      const reporterEmail = issue.fields?.reporter?.emailAddress || "Unknown Email";
-      const assigneeName = issue.fields?.assignee?.displayName || "Unknown Assignee";
+      const description = issue.fields?.description || "No description";
+      const resolution = issue.fields?.resolution?.name || "No resolution info";
+
       const assigneeEmail = issue.fields?.assignee?.emailAddress || JIRA_USER;
-      const resolution = issue.fields?.resolution?.name || "No Resolution Provided";
 
-      // Build rich Gemini prompt for proper summary
-      const geminiPrompt = `
-Ticket: [${issueKey}] ${title}
-Raised by: ${reporterName} (${reporterEmail})
-Assigned to: ${assigneeName} (${assigneeEmail})
+      if (assigneeEmail && !processedEmails.has(issueKey)) {
+        // Generate Gemini summary
+        const geminiPrompt = `Summarize this Jira ticket for Confluence:
+Title: ${title}
+Raised by: ${reporterName}
 Description: ${description}
-Resolution: ${resolution}
+Resolution: ${resolution}`;
+        const geminiSummary = await getGeminiSummary(geminiPrompt);
 
-Please write a concise Confluence-ready summary explaining:
-1. What the issue was
-2. How it was resolved
-3. Key context or details to note
-      `;
+        const body = `Gemini Summary:\n${geminiSummary}`;
 
-      const geminiSummary = await getGeminiSummary(geminiPrompt);
+        reviewQueue.push({ subject: `[${issueKey}] ${title}`, body });
+        console.log(`📝 Ticket added to review queue: [${issueKey}] ${title}`);
+        await sendReviewEmail(assigneeEmail, `[${issueKey}] ${title}`, body);
 
-      const body = `Gemini Summary: ${geminiSummary}`;
-      reviewQueue.push({ subject: `[${issueKey}] ${title}`, body });
-
-      console.log(`📝 Ticket added to review queue: [${issueKey}] ${title}`);
-      await sendReviewEmail(assigneeEmail, `[${issueKey}] ${title}`, body);
-
-      processedEmails.add(issueKey);
+        processedEmails.add(issueKey);
+      }
     }
 
     state.lastPollTimestamp = Date.now();
@@ -173,6 +173,7 @@ Please write a concise Confluence-ready summary explaining:
     );
   }
 }
+
 
 
 
