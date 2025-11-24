@@ -96,8 +96,7 @@ const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT; // e.g., "https://generativ
 async function getGeminiSummary(ticket) {
   try {
     const promptText = `
-Write a clear Confluence-ready summary for the following Jira ticket.
-Include:
+Write a Confluence-ready summary for this Jira ticket:
 - Ticket key and title
 - Who raised it
 - Status
@@ -117,7 +116,9 @@ Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
       `${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`,
       {
         model: "models/text-bison-001",
-        input: promptText,
+        instances: [
+          { content: promptText }
+        ],
         temperature: 0.3,
         candidate_count: 1
       },
@@ -126,12 +127,13 @@ Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
       }
     );
 
-    return res.data?.candidates?.[0]?.content || ticket.fields.summary;
+    return res.data?.predictions?.[0]?.content || ticket.fields.summary;
   } catch (err) {
     console.error("🚨 Error generating Gemini summary:", err.response?.data || err.message);
-    return ticket.fields.summary; // fallback
+    return ticket.fields.summary;
   }
 }
+
 
 
 async function pollJiraTickets() {
