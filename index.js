@@ -117,9 +117,9 @@ Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
       `${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`,
       {
         model: "models/text-bison-001",
-        prompt: [
-          { type: "text", content: promptText }
-        ],
+        prompt: {
+          text: promptText
+        },
         temperature: 0.3,
         candidate_count: 1
       },
@@ -128,7 +128,7 @@ Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
       }
     );
 
-    return res.data?.candidates?.[0]?.content?.[0]?.text || ticket.fields.summary;
+    return res.data?.candidates?.[0]?.content || ticket.fields.summary;
   } catch (err) {
     console.error("🚨 Error generating Gemini summary:", err.response?.data || err.message);
     return ticket.fields.summary; // fallback
