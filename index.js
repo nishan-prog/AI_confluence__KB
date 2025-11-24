@@ -95,31 +95,31 @@ const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT; // e.g., "https://generativ
 
 async function getGeminiSummary(ticket) {
   try {
-    // Construct a Confluence-ready summary prompt
-    const prompt = `
-      Write a clear Confluence-ready summary for the following Jira ticket.
-      Include:
-      - Ticket key and title
-      - Who raised it
-      - Status
-      - What was done to resolve it
-      - Resolution date if available
+    const promptText = `
+Write a clear Confluence-ready summary for the following Jira ticket.
+Include:
+- Ticket key and title
+- Who raised it
+- Status
+- What was done to resolve it
+- Resolution date if available
 
-      Format in bullet points or short paragraphs, ready to paste into Confluence.
-
-      Ticket details:
-      Key: ${ticket.key}
-      Title: ${ticket.fields.summary}
-      Raised by: ${ticket.fields.reporter?.displayName || "Unknown"}
-      Status: ${ticket.fields.status?.name || "Unknown"}
-      Description: ${ticket.fields.description || "No detailed description"}
-      Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
+Ticket details:
+Key: ${ticket.key}
+Title: ${ticket.fields.summary}
+Raised by: ${ticket.fields.reporter?.displayName || "Unknown"}
+Status: ${ticket.fields.status?.name || "Unknown"}
+Description: ${ticket.fields.description || "No detailed description"}
+Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
     `;
 
     const res = await axios.post(
       `${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`,
       {
-        prompt: { text: prompt },
+        model: "models/text-bison-001",
+        prompt: [
+          { type: "text", content: promptText }
+        ],
         temperature: 0.3,
         candidate_count: 1
       },
@@ -134,6 +134,7 @@ async function getGeminiSummary(ticket) {
     return ticket.fields.summary; // fallback
   }
 }
+
 
 async function pollJiraTickets() {
   try {
