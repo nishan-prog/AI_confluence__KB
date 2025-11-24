@@ -97,42 +97,42 @@ async function getGeminiSummary(ticket) {
   try {
     const promptText = `
 Write a Confluence-ready summary for this Jira ticket:
-- Ticket key and title
-- Who raised it
-- Status
-- What was done to resolve it
-- Resolution date if available
-
-Ticket details:
 Key: ${ticket.key}
 Title: ${ticket.fields.summary}
 Raised by: ${ticket.fields.reporter?.displayName || "Unknown"}
 Status: ${ticket.fields.status?.name || "Unknown"}
 Description: ${ticket.fields.description || "No detailed description"}
 Resolution date: ${ticket.fields.resolutiondate || "Unknown"}
+
+Please summarise what was done to resolve the ticket.
     `;
 
     const res = await axios.post(
-      `${GEMINI_ENDPOINT}?key=${process.env.GEMINI_API_KEY}`,
-      {
-        model: "models/text-bison-001",
-        instances: [
-          { content: promptText }
-        ],
-        temperature: 0.3,
-        candidate_count: 1
-      },
-      {
-        headers: { "Content-Type": "application/json" }
-      }
-    );
+  process.env.GEMINI_ENDPOINT,
+  {
+    contents: [
+      { parts: [ { text: promptText } ] }
+    ]
+  },
+  {
+    headers: {
+      "Content-Type": "application/json",
+      "X-goog-api-key": process.env.GEMINI_API_KEY
+    }
+  }
+);
 
-    return res.data?.predictions?.[0]?.content || ticket.fields.summary;
+
+    const candidate = res.data?.candidates?.[0];
+    const summary = candidate?.content?.parts?.map(p => p.text).join("") || ticket.fields.summary;
+    return summary;
+
   } catch (err) {
     console.error("🚨 Error generating Gemini summary:", err.response?.data || err.message);
     return ticket.fields.summary;
   }
 }
+
 
 
 
