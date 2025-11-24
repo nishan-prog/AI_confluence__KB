@@ -174,22 +174,41 @@ async function pollJiraTickets() {
     console.log(`✅ Found ${resolvedTickets.length} resolved ticket(s).`);
 
     for (const issue of resolvedTickets) {
-      const issueKey = issue.key;
-      const assigneeEmail = issue.fields?.assignee?.emailAddress || JIRA_USER;
+  const issueKey = issue.key;
+  const title = issue.fields?.summary || "No Summary";
 
-      if (assigneeEmail && !processedEmails.has(issueKey)) {
-        // ✅ Generate Gemini summary
-        const summary = await getGeminiSummary(issue);
+  // ---- Extract description safely ----
+  let description = "No description provided.";
+  if (issue.fields?.description) {
+    description = typeof issue.fields.description === "string"
+      ? issue.fields.description
+      : JSON.stringify(issue.fields.description, null, 2); // pretty print objects
+  }
 
-        const body = `Gemini Summary:\n${summary}`;
-        reviewQueue.push({ subject: `[${issue.key}] ${issue.fields?.summary}`, body });
+  // ---- Build full content for Gemini ----
+  const geminiInput = `
+Ticket Key: ${issueKey}
+Title: ${title}
+Raised by: ${issue.fields?.reporter?.displayName || "Unknown"}
+Status: ${issue.fields?.status?.name || "Unknown"}
+Resolution Date: ${issue.fields?.resolutiondate || "Unknown"}
+Description:
+${description}
+`;
 
-        console.log(`📝 Ticket added to review queue: [${issueKey}] ${summary}`);
-        await sendReviewEmail(assigneeEmail, `[${issueKey}] ${issue.fields?.summary}`, body);
+  const assigneeEmail = issue.fields?.assignee?.emailAddress || JIRA_USER;
 
-        processedEmails.add(issueKey);
-      }
-    }
+  if (assigneeEmail && !processedEmails.has(issueKey)) {
+    const body = await getGeminiSummary(geminiInput); // your Gemini function
+    reviewQueue.push({ subject: `[${issueKey}] ${title}`, body });
+
+    console.log(`📝 Ticket added to review queue: [${issueKey}] ${title}`);
+    await sendReviewEmail(assigneeEmail, `[${issueKey}] ${title}`, body);
+
+    processedEmails.add(issueKey);
+  }
+}
+
 
     state.lastPollTimestamp = Date.now();
     saveState();
