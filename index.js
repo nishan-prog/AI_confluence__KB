@@ -101,8 +101,17 @@ async function getGeminiSummary(ticket) {
       : "No comments provided.";
 
     const promptText = `
-Write a Confluence-ready knowledge base page for this resolved Jira ticket.
-Use clear headings, bullet points, and separate paragraphs.
+Write a Rovo-style resolution summary with:
+- A short intro of what the issue was
+- A breakdown of troubleshooting steps taken
+- Actions performed to resolve the issue
+- Root cause analysis (infer based on description + comments)
+- Clear, practical prevention tips
+- Recommendations for future similar issues
+- A final section called “Agent Insights” where you analyze how effectively the issue was resolved, identify bottlenecks, and propose workflow improvements.
+
+Keep it structured, extremely clear, and formatted for Confluence. Use headings, bullet points, and neat separation between sections.
+
 
 Ticket Key: ${ticket.key}
 Title: ${ticket.summary}
